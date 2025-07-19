@@ -65,7 +65,7 @@ export default function Home() {
 
   const fetchArticles = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/articles`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/articles`);
       const data = await response.json();
       if (data.success) {
         setArticles(data.data);
@@ -82,7 +82,7 @@ export default function Home() {
     setSubscribing(true);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/subscribe`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/subscribe`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

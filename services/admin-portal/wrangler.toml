@@ -1,0 +1,4 @@
+name = "ai-news-admin"
+compatibility_date = "2024-07-19"
+compatibility_flags = ["nodejs_compat_populate_process_env"]
+pages_build_output_dir = "out"

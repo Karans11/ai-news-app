@@ -1,376 +1,278 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const dotenv = require('dotenv');
-const { createClient } = require('@supabase/supabase-js');
-const rateLimit = require('express-rate-limit');
+// Complete Cloudflare Worker API Gateway - AI News App
+// Replaces your Express.js server with all endpoints
+import { createClient } from '@supabase/supabase-js';
 
-// Load environment variables
-dotenv.config();
-
-// Check environment variables
-console.log('Starting API Gateway...');
-console.log('Environment check:');
-console.log('- PORT:', process.env.PORT || '3001');
-console.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✓ Set' : '✗ Missing');
-console.log('- SUPABASE_SERVICE_KEY:', process.env.SUPABASE_SERVICE_KEY ? '✓ Set' : '✗ Missing');
-
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
-  console.error('\nERROR: Missing required environment variables!');
-  console.error('Please create a .env file with:');
-  console.error('SUPABASE_URL=your_supabase_url');
-  console.error('SUPABASE_SERVICE_KEY=your_service_key');
-  process.exit(1);
-}
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-// Initialize Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
-// Middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
-
-// CORS configuration
-app.use(cors({
-  origin: '*',
-  credentials: true
-}));
-
-app.use(express.json());
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-app.use('/api/', limiter);
-
-// Logging middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Get all articles
-app.get('/api/articles', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('articles')
-      .select('*')
-      .eq('is_published', true)
-      .order('published_at', { ascending: false });
-
-    if (error) throw error;
-    res.json({ success: true, data: data || [] });
-  } catch (error) {
-    console.error('Error fetching articles:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch articles' });
-  }
-});
-
-// Get single article
-app.get('/api/articles/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
+export default {
+  async fetch(request, env, ctx) {
+    // Initialize Supabase
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
     
-    const { data: article, error: fetchError } = await supabase
-      .from('articles')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (fetchError) throw fetchError;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
     
-    const { error: updateError } = await supabase
-      .from('articles')
-      .update({ view_count: (article.view_count || 0) + 1 })
-      .eq('id', id);
-    
-    if (updateError) {
-      console.error('Error updating view count:', updateError);
-    }
-
-    res.json({ success: true, data: article });
-  } catch (error) {
-    console.error('Error fetching article:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch article' });
-  }
-});
-
-// Subscribe endpoint
-app.post('/api/subscribe', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ success: false, error: 'Email required' });
-    }
-
-    const { error } = await supabase
-      .from('subscribers')
-      .insert({ email });
-
-    if (error) {
-      if (error.code === '23505') {
-        return res.status(400).json({ success: false, error: 'Already subscribed' });
-      }
-      throw error;
-    }
-
-    res.json({ success: true, message: 'Successfully subscribed' });
-  } catch (error) {
-    console.error('Subscription error:', error);
-    res.status(500).json({ success: false, error: 'Failed to subscribe' });
-  }
-});
-
-// Admin login endpoint
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    
-    if (email === 'admin@ainews.com' && password === 'admin123') {
-      res.json({ 
-        success: true, 
-        token: 'demo-admin-token',
-        user: { email, role: 'admin' }
-      });
-    } else {
-      res.status(401).json({ success: false, error: 'Invalid credentials' });
-    }
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, error: 'Login failed' });
-  }
-});
-
-// Admin: Get statistics
-app.get('/api/admin/stats', async (req, res) => {
-  try {
-    console.log('Fetching admin stats...');
-    
-    const [articlesResult, subscribersResult, viewsResult] = await Promise.all([
-      supabase.from('articles').select('*', { count: 'exact', head: true }),
-      supabase.from('subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true),
-      supabase.from('articles').select('view_count')
-    ]);
-
-    const viewSum = viewsResult.data?.reduce((sum, article) => sum + (article.view_count || 0), 0) || 0;
-
-    const responseData = {
-      success: true,
-      data: {
-        totalArticles: articlesResult.count || 0,
-        totalSubscribers: subscribersResult.count || 0,
-        totalViews: viewSum,
-        lastUpdated: new Date().toISOString()
-      }
+    // CORS headers
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     };
 
-    console.log('Sending stats response:', responseData);
-    res.json(responseData);
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch statistics' });
+    // Handle CORS preflight
+    if (method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    // Helper function for JSON responses
+    const jsonResponse = (data, status = 200) => {
+      return new Response(JSON.stringify(data), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    };
+
+    // Helper function for error responses
+    const errorResponse = (message, status = 500) => {
+      console.error('API Error:', message);
+      return jsonResponse({ success: false, error: message }, status);
+    };
+
+    try {
+      // ==================== PUBLIC ENDPOINTS ====================
+
+      // Health check endpoint
+      if (path === '/health' && method === 'GET') {
+        return jsonResponse({ 
+          status: 'ok', 
+          timestamp: new Date().toISOString(),
+          environment: 'Cloudflare Workers'
+        });
+      }
+
+      // GET /api/articles - Get all published articles
+      if (path === '/api/articles' && method === 'GET') {
+        const { data, error } = await supabase
+          .from('articles')
+          .select('*')
+          .eq('is_published', true)
+          .order('published_at', { ascending: false });
+
+        if (error) throw error;
+        return jsonResponse({ success: true, data: data || [] });
+      }
+
+      // GET /api/articles/:id - Get single article and increment view count
+      if (path.startsWith('/api/articles/') && method === 'GET' && !path.includes('/admin/')) {
+        const id = path.split('/').pop();
+        
+        // Get article
+        const { data: article, error: fetchError } = await supabase
+          .from('articles')
+          .select('*')
+          .eq('id', id)
+          .single();
+
+        if (fetchError) throw fetchError;
+        
+        // Increment view count
+        const { error: updateError } = await supabase
+          .from('articles')
+          .update({ view_count: (article.view_count || 0) + 1 })
+          .eq('id', id);
+        
+        if (updateError) {
+          console.error('Error updating view count:', updateError);
+        }
+
+        return jsonResponse({ success: true, data: article });
+      }
+
+      // POST /api/subscribe - Newsletter subscription
+      if (path === '/api/subscribe' && method === 'POST') {
+        const body = await request.json();
+        const { email } = body;
+        
+        if (!email) {
+          return errorResponse('Email required', 400);
+        }
+
+        const { error } = await supabase
+          .from('subscribers')
+          .insert({ email });
+
+        if (error) {
+          if (error.code === '23505') { // Duplicate email
+            return errorResponse('Already subscribed', 400);
+          }
+          throw error;
+        }
+
+        return jsonResponse({ success: true, message: 'Successfully subscribed' });
+      }
+
+      // POST /api/auth/login - Admin login
+      if (path === '/api/auth/login' && method === 'POST') {
+        const body = await request.json();
+        const { email, password } = body;
+        
+        // Check credentials
+        if (email === env.ADMIN_EMAIL && password === env.ADMIN_PASSWORD) {
+          return jsonResponse({ 
+            success: true, 
+            token: 'demo-admin-token',
+            user: { email, role: 'admin' }
+          });
+        } else {
+          return errorResponse('Invalid credentials', 401);
+        }
+      }
+
+      // ==================== ADMIN ENDPOINTS ====================
+      // All admin endpoints require authentication
+
+      // Authentication check for admin routes
+      if (path.startsWith('/api/admin/')) {
+        const authHeader = request.headers.get('Authorization');
+        const isAuthenticated = authHeader === 'Bearer demo-admin-token';
+
+        if (!isAuthenticated) {
+          return errorResponse('Unauthorized', 401);
+        }
+
+        // GET /api/admin/stats - Get dashboard statistics
+        if (path === '/api/admin/stats' && method === 'GET') {
+          console.log('Fetching admin stats...');
+          
+          const [articlesResult, subscribersResult, viewsResult] = await Promise.all([
+            supabase.from('articles').select('*', { count: 'exact', head: true }),
+            supabase.from('subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true),
+            supabase.from('articles').select('view_count')
+          ]);
+
+          const viewSum = viewsResult.data?.reduce((sum, article) => sum + (article.view_count || 0), 0) || 0;
+
+          const responseData = {
+            success: true,
+            data: {
+              totalArticles: articlesResult.count || 0,
+              totalSubscribers: subscribersResult.count || 0,
+              totalViews: viewSum,
+              lastUpdated: new Date().toISOString()
+            }
+          };
+
+          console.log('Sending stats response:', responseData);
+          return jsonResponse(responseData);
+        }
+
+        // GET /api/admin/articles - Get all articles for admin
+        if (path === '/api/admin/articles' && method === 'GET') {
+          const { data, error } = await supabase
+            .from('articles')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data: data || [] });
+        }
+
+        // POST /api/admin/articles - Create new article
+        if (path === '/api/admin/articles' && method === 'POST') {
+          const body = await request.json();
+          const { title, summary, original_url, category, image_url, source } = body;
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .insert({
+              title,
+              summary,
+              original_url,
+              category,
+              image_url,
+              source,
+              published_at: new Date().toISOString(),
+              is_published: true
+            })
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data });
+        }
+
+        // PUT /api/admin/articles/:id - Update article
+        if (path.startsWith('/api/admin/articles/') && method === 'PUT') {
+          const id = path.split('/').pop();
+          const body = await request.json();
+          const { title, summary, original_url, category, image_url, source } = body;
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .update({
+              title,
+              summary,
+              original_url,
+              category,
+              image_url,
+              source,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data });
+        }
+
+        // DELETE /api/admin/articles/:id - Delete article
+        if (path.startsWith('/api/admin/articles/') && method === 'DELETE') {
+          const id = path.split('/').pop();
+          
+          const { error } = await supabase
+            .from('articles')
+            .delete()
+            .eq('id', id);
+
+          if (error) throw error;
+          return jsonResponse({ success: true, message: 'Article deleted successfully' });
+        }
+
+        // GET /api/admin/subscribers - Get all subscribers
+        if (path === '/api/admin/subscribers' && method === 'GET') {
+          const { data, error } = await supabase
+            .from('subscribers')
+            .select('*')
+            .order('subscribed_at', { ascending: false });
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data: data || [] });
+        }
+
+        // DELETE /api/admin/subscribers/:id - Delete subscriber
+        if (path.startsWith('/api/admin/subscribers/') && method === 'DELETE') {
+          const id = path.split('/').pop();
+          
+          const { error } = await supabase
+            .from('subscribers')
+            .delete()
+            .eq('id', id);
+
+          if (error) throw error;
+          return jsonResponse({ success: true, message: 'Subscriber removed successfully' });
+        }
+      }
+
+      // ==================== 404 HANDLER ====================
+      return jsonResponse({ success: false, error: 'Route not found' }, 404);
+
+    } catch (error) {
+      console.error('Worker error:', error);
+      return jsonResponse({ 
+        success: false, 
+        error: 'Internal server error',
+        details: error.message 
+      }, 500);
+    }
   }
-});
-
-// Admin: Create article
-app.post('/api/admin/articles', async (req, res) => {
-  try {
-    const { title, summary, original_url, category, image_url } = req.body;
-    
-    const { data, error } = await supabase
-      .from('articles')
-      .insert({
-        title,
-        summary,
-        original_url,
-        category,
-        image_url,
-        published_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error creating article:', error);
-    res.status(500).json({ success: false, error: 'Failed to create article' });
-  }
-});
-// Admin: Delete article by ID
-app.delete('/api/admin/articles/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { error } = await supabase
-      .from('articles')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({ success: true, message: 'Article deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting article:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete article' });
-  }
-});
-// Admin: Get all articles (published & unpublished)
-app.get('/api/admin/articles', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('articles')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error fetching all articles:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch articles' });
-  }
-});
-
-// Admin: Get all subscribers
-app.get('/api/admin/subscribers', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('subscribers')
-      .select('*')
-      .order('subscribed_at', { ascending: false });
-
-    if (error) throw error;
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error fetching subscribers:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch subscribers' });
-  }
-});
-// ========== ADD THESE NEW ENDPOINTS ==========
-
-// Admin: Update article (for edit functionality)
-app.put('/api/admin/articles/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, summary, original_url, category, image_url } = req.body;
-    
-    const { data, error } = await supabase
-      .from('articles')
-      .update({
-        title,
-        summary,
-        original_url,
-        category,
-        image_url,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error updating article:', error);
-    res.status(500).json({ success: false, error: 'Failed to update article' });
-  }
-});
-
-// Admin: Delete article
-app.delete('/api/admin/articles/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const { error } = await supabase
-      .from('articles')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-    res.json({ success: true, message: 'Article deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting article:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete article' });
-  }
-});
-
-// Admin: Get all subscribers
-app.get('/api/admin/subscribers', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('subscribers')
-      .select('*')
-      .order('subscribed_at', { ascending: false });
-
-    if (error) throw error;
-    res.json({ success: true, data: data || [] });
-  } catch (error) {
-    console.error('Error fetching subscribers:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch subscribers' });
-  }
-});
-
-// Admin: Delete subscriber
-app.delete('/api/admin/subscribers/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const { error } = await supabase
-      .from('subscribers')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-    res.json({ success: true, message: 'Subscriber removed successfully' });
-  } catch (error) {
-    console.error('Error deleting subscriber:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete subscriber' });
-  }
-});
-
-// ========== END OF NEW ENDPOINTS ==========
-
-// Make sure this 404 handler stays at the end
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route not found' });
-});
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route not found' });
-});
-
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`\n✅ API Gateway running on port ${PORT}`);
-  console.log(`📡 Health check: http://localhost:${PORT}/health`);
-  console.log(`📊 Admin stats: http://localhost:${PORT}/api/admin/stats`);
-});
-
-// Handle server errors
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    console.error(`\n❌ Port ${PORT} is already in use!`);
-    console.error('Try one of these solutions:');
-    console.error('1. Kill the process using the port:');
-    console.error(`   lsof -ti:${PORT} | xargs kill -9`);
-    console.error('2. Or use a different port in your .env file');
-  } else {
-    console.error('Server error:', error);
-  }
-  process.exit(1);
-});
+};

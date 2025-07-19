@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import AdminAuth from '../components/AdminAuth';
 
 interface Stats {
   totalArticles: number;
@@ -29,8 +28,7 @@ interface Subscriber {
   is_active: boolean;
 }
 
-
-function AdminDashboard() {
+export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [showArticleForm, setShowArticleForm] = useState(false);
@@ -750,24 +748,9 @@ function AdminDashboard() {
           animation-delay: 2s;
         }
         .animation-delay-4000 {
-}
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
           animation-delay: 4s;
         }
       `}</style>
     </div>
-  );
-}
-
-// Main exported component with authentication
-export default function AdminPage() {
-  return (
-    <AdminAuth>
-      <AdminDashboard />
-    </AdminAuth>
   );
 }

@@ -1,0 +1,4 @@
+name = "ai-news-viewer"
+compatibility_date = "2022-11-30"
+compatibility_flags = ["nodejs_compat_populate_process_env"]
+pages_build_output_dir = ".vercel/output/static"
