@@ -1,0 +1,15 @@
+{
+  "watch": ["src"],
+  "ext": "ts",
+  "exec": "ts-node",
+  "env": {
+    "NODE_OPTIONS": "--loader ts-node/esm"
+  },
+  "execMap": {
+    "ts": "ts-node"
+  },
+  "ignore": ["src/**/*.spec.ts"],
+  "signal": "SIGTERM",
+  "stdin": true,
+  "stdout": true
+}

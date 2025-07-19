@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ai-news-app
+data:
+  NODE_ENV: "production"
+  API_GATEWAY_URL: "http://api-gateway-service:3001"
+  ALLOWED_ORIGINS: "https://admin.yourdomain.com,https://yourdomain.com"
