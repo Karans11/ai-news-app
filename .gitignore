@@ -1,8 +1,47 @@
+# Dependencies
 node_modules/
+*/node_modules/
+
+# Environment files
 .env
 .env.local
-.DS_Store
-*.log
+.env.production
+.env.development
+*/**.env**
+
+# Build outputs
 dist/
-build/
+out/
 .next/
+*/dist/
+*/out/
+*/.next/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Cloudflare
+.wrangler/
+*/.wrangler/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp

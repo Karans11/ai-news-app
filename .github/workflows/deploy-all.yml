@@ -1,0 +1,62 @@
+name: Deploy Full Stack
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    name: Deploy API Gateway
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'services/api-gateway/package-lock.json'
+      
+      - name: Install and deploy API
+        run: |
+          cd services/api-gateway
+          npm ci
+        
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'services/api-gateway'
+          command: deploy
+
+  deploy-admin:
+    runs-on: ubuntu-latest
+    name: Deploy Admin Portal
+    needs: deploy-api
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'services/admin-portal/package-lock.json'
+      
+      - name: Install and build admin portal
+        run: |
+          cd services/admin-portal
+          npm ci
+          npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://ai-news-api.skaybotlabs.workers.dev
+        
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'services/admin-portal'
+          command: pages deploy out --project-name ai-news-admin

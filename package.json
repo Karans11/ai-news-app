@@ -1,0 +1,19 @@
+{
+  "name": "ai-news-app",
+  "version": "1.0.0",
+  "description": "AI-powered news aggregation platform with automated workflow",
+  "scripts": {
+    "dev:api": "cd services/api-gateway && wrangler dev",
+    "dev:admin": "cd services/admin-portal && npm run dev",
+    "deploy:api": "cd services/api-gateway && wrangler deploy",
+    "deploy:admin": "cd services/admin-portal && npm run build && wrangler pages deploy out --project-name ai-news-admin",
+    "deploy:all": "npm run deploy:api && npm run deploy:admin",
+    "install:all": "cd services/api-gateway && npm install && cd ../admin-portal && npm install"
+  },
+  "keywords": ["ai", "news", "automation", "n8n", "cloudflare"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

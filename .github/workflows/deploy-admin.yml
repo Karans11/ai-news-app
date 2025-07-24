@@ -1,0 +1,45 @@
+name: Deploy Admin Portal
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'services/admin-portal/**'
+      - '.github/workflows/deploy-admin.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Admin Portal to Cloudflare Pages
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'services/admin-portal/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd services/admin-portal
+          npm ci
+
+      - name: Build application
+        run: |
+          cd services/admin-portal
+          npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://ai-news-api.skaybotlabs.workers.dev
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'services/admin-portal'
+          command: pages deploy out --project-name ai-news-admin

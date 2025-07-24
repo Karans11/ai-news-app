@@ -1,12 +1,29 @@
 'use client';
 import { useState, useEffect } from 'react';
-import AdminAuth from '../components/AdminAuth';
 
+// Interface definitions
 interface Stats {
   totalArticles: number;
   totalSubscribers: number;
   totalViews: number;
+  pendingApproval: number;
   lastUpdated: string;
+}
+
+interface PendingArticle {
+  id: string;
+  title: string;
+  summary: string;
+  original_url: string;
+  source: string;
+  category: string;
+  ai_tags: string[];
+  validation_score: number;
+  created_at: string;
+  image_url?: string;
+  n8n_workflow_id?: string;
+  approval_status: string;
+  auto_generated: boolean;
 }
 
 interface Article {
@@ -14,65 +31,730 @@ interface Article {
   title: string;
   summary: string;
   original_url: string;
+  source: string;
   category: string;
-  image_url?: string;
+  is_published: boolean;
   created_at: string;
   published_at: string;
   view_count: number;
-  is_published: boolean;
+  auto_generated: boolean;
+  approval_status: string;
+  status: string;
 }
 
 interface Subscriber {
   id: string;
   email: string;
-  subscribed_at: string;
   is_active: boolean;
+  subscribed_at: string;
 }
 
+// Schedule Dialog Component
+function ScheduleDialog({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  articleTitle 
+}: { 
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (dateTime: string) => void;
+  articleTitle: string;
+}) {
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('09:00');
 
-function AdminDashboard() {
+  const handleConfirm = () => {
+    if (!selectedDate) {
+      alert('Please select a date');
+      return;
+    }
+    const scheduledDateTime = `${selectedDate}T${selectedTime}:00.000Z`;
+    onConfirm(scheduledDateTime);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <h3 className="text-lg font-bold mb-4">Schedule Article</h3>
+        <p className="text-gray-600 mb-4">Schedule "{articleTitle}" for later publication</p>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              min={new Date().toISOString().split('T')[0]}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Time</label>
+            <input
+              type="time"
+              value={selectedTime}
+              onChange={(e) => setSelectedTime(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Schedule
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Approval Dashboard Component
+function ApprovalDashboard() {
+  const [pendingArticles, setPendingArticles] = useState<PendingArticle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [scheduleDialog, setScheduleDialog] = useState<{
+    isOpen: boolean;
+    articleId: string;
+    articleTitle: string;
+  }>({
+    isOpen: false,
+    articleId: '',
+    articleTitle: ''
+  });
+
+  useEffect(() => {
+    fetchPendingArticles();
+  }, []);
+
+  const fetchPendingArticles = async () => {
+    try {
+      console.log('Fetching pending articles...');
+      
+      const response = await fetch(
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles/pending',
+        {
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      console.log('Pending articles response:', data);
+      
+      if (data.success) {
+        setPendingArticles(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching pending articles:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApprove = async (articleId: string, autoPublish: boolean = false) => {
+    setProcessingId(articleId);
+    try {
+      const requestBody = {
+        auto_publish: autoPublish,
+        scheduled_publish_at: autoPublish ? null : new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      };
+      
+      const response = await fetch(
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles/${articleId}/approve`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer demo-admin-token',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (response.ok && responseData.success) {
+        alert(autoPublish ? 'Article approved and published!' : 'Article approved for scheduling!');
+        await fetchPendingArticles();
+        // Trigger stats refresh in parent
+        window.dispatchEvent(new CustomEvent('refreshStats'));
+      } else {
+        alert(`Error approving article: ${responseData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error approving article:', error);
+      alert('Error approving article: ' + error.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleSchedule = (articleId: string, articleTitle: string) => {
+    setScheduleDialog({
+      isOpen: true,
+      articleId,
+      articleTitle
+    });
+  };
+
+  const handleScheduleConfirm = async (scheduledDateTime: string) => {
+    const { articleId } = scheduleDialog;
+    setProcessingId(articleId);
+    
+    try {
+      const response = await fetch(
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles/${articleId}/approve`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer demo-admin-token',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            auto_publish: false,
+            scheduled_publish_at: scheduledDateTime
+          })
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (response.ok && responseData.success) {
+        alert(`Article scheduled for ${new Date(scheduledDateTime).toLocaleString()}!`);
+        await fetchPendingArticles();
+        window.dispatchEvent(new CustomEvent('refreshStats'));
+      } else {
+        alert(`Error scheduling article: ${responseData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error scheduling article:', error);
+      alert('Error scheduling article: ' + error.message);
+    } finally {
+      setProcessingId(null);
+      setScheduleDialog({ isOpen: false, articleId: '', articleTitle: '' });
+    }
+  };
+
+  const handleReject = async (articleId: string) => {
+    setProcessingId(articleId);
+    try {
+      const response = await fetch(
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles/${articleId}/reject`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+
+      const responseData = await response.json();
+
+      if (response.ok && responseData.success) {
+        alert('Article rejected');
+        await fetchPendingArticles();
+        window.dispatchEvent(new CustomEvent('refreshStats'));
+      } else {
+        alert(`Error rejecting article: ${responseData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error rejecting article:', error);
+      alert('Error rejecting article: ' + error.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <span className="ml-2">Loading pending articles...</span>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Pending Approval</h2>
+          <div className="flex items-center space-x-2">
+            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-medium">
+              {pendingArticles.length} articles
+            </span>
+            <button
+              onClick={fetchPendingArticles}
+              className="px-3 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors"
+            >
+              ↻ Refresh
+            </button>
+          </div>
+        </div>
+
+        {pendingArticles.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="text-gray-400 text-6xl mb-4">📝</div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No articles pending approval</h3>
+            <p className="text-gray-500">New AI-generated articles will appear here for review.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {pendingArticles.map((article) => (
+              <div key={article.id} className="border rounded-lg p-6 hover:shadow-md transition-shadow">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-xl mb-3 text-gray-900 leading-tight">
+                      {article.title}
+                    </h3>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm font-medium">
+                        📡 {article.source}
+                      </span>
+                      <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+                        🏷️ {article.category}
+                      </span>
+                      {article.validation_score && (
+                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
+                          ⭐ Quality: {article.validation_score}/10
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-500 ml-4">
+                    {new Date(article.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                  <p className="text-gray-800 leading-relaxed">{article.summary}</p>
+                </div>
+
+                <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+                  <a 
+                    href={article.original_url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center"
+                  >
+                    📖 View Original →
+                  </a>
+                  
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => handleReject(article.id)}
+                      disabled={processingId === article.id}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 font-medium"
+                    >
+                      {processingId === article.id ? '⏳' : '❌'} Reject
+                    </button>
+                    <button
+                      onClick={() => handleSchedule(article.id, article.title)}
+                      disabled={processingId === article.id}
+                      className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors disabled:opacity-50 font-medium"
+                    >
+                      📅 Schedule
+                    </button>
+                    <button
+                      onClick={() => handleApprove(article.id, true)}
+                      disabled={processingId === article.id}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 font-medium"
+                    >
+                      {processingId === article.id ? '⏳' : '🚀'} Publish Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <ScheduleDialog
+        isOpen={scheduleDialog.isOpen}
+        onClose={() => setScheduleDialog({ isOpen: false, articleId: '', articleTitle: '' })}
+        onConfirm={handleScheduleConfirm}
+        articleTitle={scheduleDialog.articleTitle}
+      />
+    </>
+  );
+}
+
+// Articles List Component
+function ArticlesList() {
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchArticles();
+  }, []);
+
+  const fetchArticles = async () => {
+    try {
+      const response = await fetch(
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles',
+        {
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      if (data.success) {
+        setArticles(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching articles:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-8">Loading articles...</div>;
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-2xl font-bold mb-6">All Articles</h2>
+      
+      {articles.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-gray-400 text-6xl mb-4">📄</div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No articles found</h3>
+          <p className="text-gray-500">Articles will appear here once created.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Views</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {articles.map((article) => (
+                <tr key={article.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{article.title}</div>
+                        <div className="text-sm text-gray-500">{article.source}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      article.is_published 
+                        ? 'bg-green-100 text-green-800'
+                        : article.approval_status === 'pending'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {article.is_published ? 'Published' : article.approval_status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {article.view_count || 0}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(article.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <a
+                      href={article.original_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-900"
+                    >
+                      View
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Subscribers List Component
+function SubscribersList() {
+  const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchSubscribers();
+  }, []);
+
+  const fetchSubscribers = async () => {
+    try {
+      const response = await fetch(
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/subscribers',
+        {
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      if (data.success) {
+        setSubscribers(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching subscribers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-8">Loading subscribers...</div>;
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-2xl font-bold mb-6">Subscribers</h2>
+      
+      {subscribers.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-gray-400 text-6xl mb-4">👥</div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No subscribers yet</h3>
+          <p className="text-gray-500">Subscribers will appear here when people sign up.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subscribed</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {subscribers.map((subscriber) => (
+                <tr key={subscriber.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    {subscriber.email}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      subscriber.is_active 
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      {subscriber.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(subscriber.subscribed_at).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Analytics Component
+function Analytics() {
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-2xl font-bold mb-6">Analytics Overview</h2>
+        <div className="text-center py-12">
+          <div className="text-gray-400 text-6xl mb-4">📈</div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Analytics Coming Soon</h3>
+          <p className="text-gray-500">Detailed analytics and insights will be available soon.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Manual Article Creation Component
+function CreateArticleForm({ onSuccess }: { onSuccess: () => void }) {
+  const [formData, setFormData] = useState({
+    title: '',
+    summary: '',
+    original_url: '',
+    category: '',
+    source: '',
+    image_url: ''
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const response = await fetch('https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer demo-admin-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(formData)
+      });
+
+      const responseData = await response.json();
+
+      if (response.ok && responseData.success) {
+        alert('Article created and published successfully!');
+        setFormData({ title: '', summary: '', original_url: '', category: '', source: '', image_url: '' });
+        onSuccess();
+      } else {
+        alert(`Error creating article: ${responseData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error creating article:', error);
+      alert('Error creating article: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h2 className="text-2xl font-bold mb-6">Create New Article</h2>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+          <input
+            type="text"
+            value={formData.title}
+            onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Summary</label>
+          <textarea
+            value={formData.summary}
+            onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+            rows={4}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Original URL</label>
+            <input
+              type="url"
+              value={formData.original_url}
+              onChange={(e) => setFormData({ ...formData, original_url: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <select
+              value={formData.category}
+              onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select Category</option>
+              <option value="AI Models">AI Models</option>
+              <option value="Machine Learning">Machine Learning</option>
+              <option value="Policy">Policy</option>
+              <option value="Research">Research</option>
+              <option value="Industry News">Industry News</option>
+              <option value="Startups">Startups</option>
+              <option value="AI Security">AI Security</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+            <input
+              type="text"
+              value={formData.source}
+              onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., TechCrunch, OpenAI Blog"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Image URL (optional)</label>
+            <input
+              type="url"
+              value={formData.image_url}
+              onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+        >
+          {loading ? '⏳ Creating...' : '🚀 Create & Publish Article'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// Main Dashboard Component
+export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showArticleForm, setShowArticleForm] = useState(false);
-  const [activeView, setActiveView] = useState<'dashboard' | 'articles' | 'subscribers' | 'analytics' | 'settings'>('dashboard');
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
-  const [editingArticle, setEditingArticle] = useState<Article | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
-  const [selectedSubscribers, setSelectedSubscribers] = useState<Set<string>>(new Set());
-
-  // Form states
-  const [title, setTitle] = useState('');
-  const [summary, setSummary] = useState('');
-  const [originalUrl, setOriginalUrl] = useState('');
-  const [category, setCategory] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-
-  // Menu items with icons
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'articles', label: 'Articles', icon: '📝' },
-    { id: 'subscribers', label: 'Subscribers', icon: '👥' },
-    { id: 'analytics', label: 'Analytics', icon: '📈' },
-    { id: 'settings', label: 'Settings', icon: '⚙️' },
-  ];
-
-  const categories = ['All', 'AI Models', 'Machine Learning', 'Policy', 'Research', 'Industry', 'Startups', 'AI Security'];
+  const [activeTab, setActiveTab] = useState('dashboard');
 
   useEffect(() => {
     fetchStats();
-    if (activeView === 'articles') {
-      fetchArticles();
-    } else if (activeView === 'subscribers') {
-      fetchSubscribers();
-    }
-  }, [activeView]);
+    
+    // Listen for stats refresh events
+    const handleStatsRefresh = () => {
+      fetchStats();
+    };
+    
+    window.addEventListener('refreshStats', handleStatsRefresh);
+    return () => window.removeEventListener('refreshStats', handleStatsRefresh);
+  }, []);
 
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/stats`);
+      const response = await fetch('https://ai-news-api.skaybotlabs.workers.dev/api/admin/stats', {
+        headers: {
+          'Authorization': 'Bearer demo-admin-token'
+        }
+      });
+      
       const data = await response.json();
       if (data.success) {
         setStats(data.data);
@@ -84,690 +766,164 @@ function AdminDashboard() {
     }
   };
 
-  const fetchArticles = async () => {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/articles`);
-      const data = await res.json();
-      if (data.success) setArticles(data.data);
-    } catch (error) {
-      console.error('Error fetching articles:', error);
-    }
-  };
-
-  const fetchSubscribers = async () => {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/subscribers`);
-      const data = await res.json();
-      if (data.success) setSubscribers(data.data);
-    } catch (error) {
-      console.error('Error fetching subscribers:', error);
-    }
-  };
-
-  const handleSubmitArticle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const url = editingArticle 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/admin/api/articles/${editingArticle.id}`
-        : `${process.env.NEXT_PUBLIC_API_URL}/admin/api/articles`;
-      
-      const method = editingArticle ? 'PUT' : 'POST';
-      
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title,
-          summary,
-          original_url: originalUrl,
-          category,
-          image_url: imageUrl
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        alert(editingArticle ? 'Article updated successfully!' : 'Article created successfully!');
-        // Reset form
-        resetForm();
-        // Refresh data
-        fetchStats();
-        fetchArticles();
-      }
-    } catch (error) {
-      console.error('Error saving article:', error);
-      alert('Failed to save article');
-    }
-  };
-
-  const resetForm = () => {
-    setTitle('');
-    setSummary('');
-    setOriginalUrl('');
-    setCategory('');
-    setImageUrl('');
-    setShowArticleForm(false);
-    setEditingArticle(null);
-  };
-
-  const handleEditArticle = (article: Article) => {
-    setEditingArticle(article);
-    setTitle(article.title);
-    setSummary(article.summary);
-    setOriginalUrl(article.original_url);
-    setCategory(article.category);
-    setImageUrl(article.image_url || '');
-    setShowArticleForm(true);
-  };
-
-  const handleDeleteArticle = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this article?')) return;
-
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/api/articles/${id}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        fetchArticles();
-        fetchStats();
-      } else {
-        alert('Failed to delete article');
-      }
-    } catch (error) {
-      console.error('Error deleting article:', error);
-      alert('Error deleting article');
-    }
-  };
-
-  const handleDeleteSubscriber = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this subscriber?')) return;
-
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/subscribers/${id}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        fetchSubscribers();
-        fetchStats();
-      } else {
-        alert('Failed to remove subscriber');
-      }
-    } catch (error) {
-      console.error('Error removing subscriber:', error);
-      alert('Error removing subscriber');
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (activeView === 'articles' && selectedArticles.size > 0) {
-      if (!confirm(`Delete ${selectedArticles.size} articles?`)) return;
-      
-      for (const id of selectedArticles) {
-        await handleDeleteArticle(id);
-      }
-      setSelectedArticles(new Set());
-    } else if (activeView === 'subscribers' && selectedSubscribers.size > 0) {
-      if (!confirm(`Remove ${selectedSubscribers.size} subscribers?`)) return;
-      
-      for (const id of selectedSubscribers) {
-        await handleDeleteSubscriber(id);
-      }
-      setSelectedSubscribers(new Set());
-    }
-  };
-
-  const toggleSelectArticle = (id: string) => {
-    const newSelection = new Set(selectedArticles);
-    if (newSelection.has(id)) {
-      newSelection.delete(id);
-    } else {
-      newSelection.add(id);
-    }
-    setSelectedArticles(newSelection);
-  };
-
-  const toggleSelectSubscriber = (id: string) => {
-    const newSelection = new Set(selectedSubscribers);
-    if (newSelection.has(id)) {
-      newSelection.delete(id);
-    } else {
-      newSelection.add(id);
-    }
-    setSelectedSubscribers(newSelection);
-  };
-
-  const filteredArticles = articles.filter(article => {
-    const matchesCategory = selectedCategory === 'All' || article.category === selectedCategory;
-    const matchesSearch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         article.summary.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  const filteredSubscribers = subscribers.filter(sub => 
-    sub.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading AI Dashboard...</div>
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <span className="ml-3 text-lg">Loading dashboard...</span>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900 flex">
-      {/* Animated Background */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -inset-[10px] opacity-30">
-          <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
-          <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
-          <div className="absolute -bottom-8 left-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
-        </div>
-      </div>
-
-      {/* Sidebar */}
-      <aside className="w-64 bg-black/30 backdrop-blur-md border-r border-white/10 h-screen sticky top-0 z-20">
-        <div className="p-6">
-          <div className="flex items-center space-x-2 mb-8">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-600 rounded-lg flex items-center justify-center">
-              <span className="text-xl">🤖</span>
+    <div className="min-h-screen bg-gray-100">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">🤖 AI News Admin Portal</h1>
+              <p className="text-gray-600 mt-1">Manage your AI news content and automation</p>
             </div>
-            <h1 className="text-xl font-bold text-white">AI Admin</h1>
+            <div className="text-sm text-gray-500">
+              Last updated: {stats?.lastUpdated ? new Date(stats.lastUpdated).toLocaleString() : 'Never'}
+            </div>
           </div>
           
-          <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveView(item.id as any)}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  activeView === item.id
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg'
-                    : 'text-gray-300 hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                <span className="text-xl">{item.icon}</span>
-                <span className="font-medium">{item.label}</span>
-              </button>
-            ))}
+          {/* Navigation */}
+          <nav className="mt-6">
+            <div className="flex space-x-1 flex-wrap">
+              {[
+                { id: 'dashboard', name: 'Dashboard', icon: '📊' },
+                { id: 'approval', name: 'Pending Approval', icon: '✋', badge: stats?.pendingApproval },
+                { id: 'articles', name: 'All Articles', icon: '📄' },
+                { id: 'subscribers', name: 'Subscribers', icon: '👥' },
+                { id: 'create', name: 'Create Article', icon: '✍️' },
+                { id: 'analytics', name: 'Analytics', icon: '📈' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center ${
+                    activeTab === tab.id 
+                      ? 'bg-blue-600 text-white shadow-md' 
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  }`}
+                >
+                  <span className="mr-2">{tab.icon}</span>
+                  {tab.name}
+                  {tab.badge && tab.badge > 0 && (
+                    <span className="ml-2 bg-red-500 text-white px-2 py-1 rounded-full text-xs font-bold">
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </nav>
         </div>
-      </aside>
-
-      {/* Main Content */}
-      <div className="flex-1 relative z-10">
-        {/* Header */}
-        <header className="bg-black/20 backdrop-blur-md border-b border-white/10 sticky top-0 z-10">
-          <div className="px-8 py-6">
-            <h1 className="text-3xl font-bold text-white">
-              {menuItems.find(item => item.id === activeView)?.label} Overview
-            </h1>
-            <p className="text-gray-300 mt-1">Manage your AI news platform</p>
-          </div>
-        </header>
-
-        <main className="p-8">
-          {/* Dashboard View */}
-          {activeView === 'dashboard' && (
-            <div className="space-y-8">
-              {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-gray-400 text-sm">Total Articles</h3>
-                    <span className="text-2xl">📰</span>
-                  </div>
-                  <p className="text-4xl font-bold text-white">{stats?.totalArticles || 0}</p>
-                  <p className="text-green-400 text-sm mt-2">+12% from last month</p>
-                </div>
-                
-                <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-gray-400 text-sm">Subscribers</h3>
-                    <span className="text-2xl">👥</span>
-                  </div>
-                  <p className="text-4xl font-bold text-white">{stats?.totalSubscribers || 0}</p>
-                  <p className="text-green-400 text-sm mt-2">+24% from last month</p>
-                </div>
-                
-                <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-gray-400 text-sm">Total Views</h3>
-                    <span className="text-2xl">👁️</span>
-                  </div>
-                  <p className="text-4xl font-bold text-white">{stats?.totalViews || 0}</p>
-                  <p className="text-green-400 text-sm mt-2">+18% from last week</p>
-                </div>
-                
-                <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-gray-400 text-sm">Engagement Rate</h3>
-                    <span className="text-2xl">📈</span>
-                  </div>
-                  <p className="text-4xl font-bold text-white">87%</p>
-                  <p className="text-green-400 text-sm mt-2">+5% from last week</p>
-                </div>
-              </div>
-
-              {/* Quick Actions */}
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                <h2 className="text-xl font-semibold text-white mb-4">Quick Actions</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <button
-                    onClick={() => { setShowArticleForm(true); setActiveView('articles'); }}
-                    className="p-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg text-white font-medium hover:shadow-lg transition"
-                  >
-                    ✨ Create New Article
-                  </button>
-                  <button
-                    onClick={() => setActiveView('subscribers')}
-                    className="p-4 bg-white/10 rounded-lg text-white font-medium hover:bg-white/20 transition"
-                  >
-                    📧 View Subscribers
-                  </button>
-                  <button
-                    onClick={() => setActiveView('analytics')}
-                    className="p-4 bg-white/10 rounded-lg text-white font-medium hover:bg-white/20 transition"
-                  >
-                    📊 View Analytics
-                  </button>
-                </div>
-              </div>
-
-              {/* Recent Activity */}
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                <h2 className="text-xl font-semibold text-white mb-4">Recent Activity</h2>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-gray-300">
-                    <span>New article published: "GPT-5 Announced"</span>
-                    <span className="text-sm">2 hours ago</span>
-                  </div>
-                  <div className="flex items-center justify-between text-gray-300">
-                    <span>5 new subscribers joined</span>
-                    <span className="text-sm">4 hours ago</span>
-                  </div>
-                  <div className="flex items-center justify-between text-gray-300">
-                    <span>Article "AI Ethics" reached 1k views</span>
-                    <span className="text-sm">Yesterday</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Articles Management */}
-          {activeView === 'articles' && (
-            <div className="space-y-6">
-              {/* Action Bar */}
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-4 border border-white/10">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center space-x-4 w-full md:w-auto">
-                    <button
-                      onClick={() => { setShowArticleForm(!showArticleForm); resetForm(); }}
-                      className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg text-white font-medium hover:shadow-lg transition"
-                    >
-                      {showArticleForm ? '✖️ Cancel' : '➕ New Article'}
-                    </button>
-                    {(selectedArticles.size > 0) && (
-                      <button
-                        onClick={handleBulkDelete}
-                        className="px-4 py-2 bg-red-600 rounded-lg text-white font-medium hover:bg-red-700 transition"
-                      >
-                        🗑️ Delete ({selectedArticles.size})
-                      </button>
-                    )}
-                  </div>
-                  
-                  <input
-                    type="text"
-                    placeholder="🔍 Search articles..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full md:w-64"
-                  />
-                </div>
-              </div>
-
-              {/* Category Tabs */}
-              <div className="flex flex-wrap gap-2">
-                {categories.map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-4 py-2 rounded-full transition-all ${
-                      selectedCategory === cat
-                        ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-                        : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
-              {/* Article Form */}
-              {showArticleForm && (
-                <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                  <h2 className="text-xl font-semibold text-white mb-4">
-                    {editingArticle ? '✏️ Edit Article' : '✨ Create New Article'}
-                  </h2>
-                  <form onSubmit={handleSubmitArticle} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        className="w-full px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Summary (90+ characters)</label>
-                      <textarea
-                        value={summary}
-                        onChange={(e) => setSummary(e.target.value)}
-                        rows={3}
-                        className="w-full px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        required
-                        minLength={90}
-                      />
-                      <p className="text-xs text-gray-400 mt-1">{summary.length} characters</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Original Article URL</label>
-                      <input
-                        type="url"
-                        value={originalUrl}
-                        onChange={(e) => setOriginalUrl(e.target.value)}
-                        className="w-full px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Category</label>
-                      <select
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        className="w-full px-4 py-2 bg-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        required
-                      >
-                        <option value="" className="bg-gray-800">Select Category</option>
-                        {categories.slice(1).map(cat => (
-                          <option key={cat} value={cat} className="bg-gray-800">{cat}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Image URL (Optional)</label>
-                      <input
-                        type="url"
-                        value={imageUrl}
-                        onChange={(e) => setImageUrl(e.target.value)}
-                        className="w-full px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg text-white font-semibold hover:shadow-lg transition"
-                    >
-                      {editingArticle ? '💾 Update Article' : '🚀 Publish Article'}
-                    </button>
-                  </form>
-                </div>
-              )}
-
-              {/* Articles List */}
-              <div className="space-y-3">
-                {filteredArticles.map(article => (
-                  <div key={article.id} className="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 hover:border-purple-500/50 transition">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-3 flex-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedArticles.has(article.id)}
-                          onChange={() => toggleSelectArticle(article.id)}
-                          className="mt-1"
-                        />
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-white">{article.title}</h3>
-                          <p className="text-sm text-gray-400 mt-1 line-clamp-2">{article.summary}</p>
-                          <div className="flex items-center space-x-4 mt-2 text-xs text-gray-500">
-                            <span className="bg-purple-600/20 px-2 py-1 rounded">{article.category}</span>
-                            <span>👁️ {article.view_count} views</span>
-                            <span>📅 {new Date(article.published_at).toLocaleDateString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2 ml-4">
-                        <button
-                          onClick={() => handleEditArticle(article)}
-                          className="p-2 text-blue-400 hover:bg-blue-400/20 rounded-lg transition"
-                          title="Edit"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          onClick={() => handleDeleteArticle(article.id)}
-                          className="p-2 text-red-400 hover:bg-red-400/20 rounded-lg transition"
-                          title="Delete"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Subscribers Management */}
-          {activeView === 'subscribers' && (
-            <div className="space-y-6">
-              {/* Action Bar */}
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-4 border border-white/10">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
-                    <h2 className="text-xl font-semibold text-white">Subscriber Management</h2>
-                    {selectedSubscribers.size > 0 && (
-                      <button
-                        onClick={handleBulkDelete}
-                        className="px-4 py-2 bg-red-600 rounded-lg text-white font-medium hover:bg-red-700 transition"
-                      >
-                        🗑️ Remove ({selectedSubscribers.size})
-                      </button>
-                    )}
-                  </div>
-                  
-                  <input
-                    type="text"
-                    placeholder="🔍 Search subscribers..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="px-4 py-2 bg-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 w-64"
-                  />
-                </div>
-              </div>
-
-              {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10">
-                  <h3 className="text-gray-400 text-sm mb-2">Active Subscribers</h3>
-                  <p className="text-2xl font-bold text-white">{subscribers.filter(s => s.is_active).length}</p>
-                </div>
-                <div className="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10">
-                  <h3 className="text-gray-400 text-sm mb-2">This Month</h3>
-                  <p className="text-2xl font-bold text-green-400">+{Math.floor(Math.random() * 50) + 10}</p>
-                </div>
-                <div className="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10">
-                  <h3 className="text-gray-400 text-sm mb-2">Engagement Rate</h3>
-                  <p className="text-2xl font-bold text-blue-400">92%</p>
-                </div>
-              </div>
-
-              {/* Subscribers List */}
-              <div className="space-y-3">
-                {filteredSubscribers.map(sub => (
-                  <div key={sub.id} className="bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 hover:border-purple-500/50 transition">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedSubscribers.has(sub.id)}
-                          onChange={() => toggleSelectSubscriber(sub.id)}
-                        />
-                        <div>
-                          <p className="text-white font-medium">{sub.email}</p>
-                          <p className="text-xs text-gray-400">
-                            Subscribed: {new Date(sub.subscribed_at).toLocaleDateString()} • 
-                            Status: <span className={sub.is_active ? 'text-green-400' : 'text-red-400'}>
-                              {sub.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteSubscriber(sub.id)}
-                        className="p-2 text-red-400 hover:bg-red-400/20 rounded-lg transition"
-                        title="Remove"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Analytics View */}
-          {activeView === 'analytics' && (
-            <div className="space-y-6">
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                <h2 className="text-xl font-semibold text-white mb-4">Performance Analytics</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white/5 rounded-xl p-4">
-                    <h3 className="text-gray-300 mb-4">Article Performance</h3>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Most Viewed</span>
-                        <span className="text-white">AI Ethics Guide</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Avg. Read Time</span>
-                        <span className="text-white">3.2 minutes</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Click Rate</span>
-                        <span className="text-green-400">24.5%</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-white/5 rounded-xl p-4">
-                    <h3 className="text-gray-300 mb-4">Traffic Sources</h3>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Direct</span>
-                        <span className="text-white">45%</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Social Media</span>
-                        <span className="text-white">30%</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Search</span>
-                        <span className="text-white">25%</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Settings View */}
-          {activeView === 'settings' && (
-            <div className="space-y-6">
-              <div className="bg-black/40 backdrop-blur-md rounded-2xl p-6 border border-white/10">
-                <h2 className="text-xl font-semibold text-white mb-4">Platform Settings</h2>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-gray-300 text-sm">Site Name</label>
-                    <input
-                      type="text"
-                      defaultValue="AI News Portal"
-                      className="w-full mt-1 px-4 py-2 bg-white/10 rounded-lg text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-300 text-sm">Admin Email</label>
-                    <input
-                      type="email"
-                      defaultValue="admin@ainews.com"
-                      className="w-full mt-1 px-4 py-2 bg-white/10 rounded-lg text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-300 text-sm">Articles per Page</label>
-                    <input
-                      type="number"
-                      defaultValue="12"
-                      className="w-full mt-1 px-4 py-2 bg-white/10 rounded-lg text-white"
-                    />
-                  </div>
-                  <button className="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg text-white font-medium hover:shadow-lg transition">
-                    💾 Save Settings
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </main>
       </div>
 
-      <style jsx>{`
-        @keyframes blob {
-          0% { transform: translate(0px, 0px) scale(1); }
-          33% { transform: translate(30px, -50px) scale(1.1); }
-          66% { transform: translate(-20px, 20px) scale(0.9); }
-          100% { transform: translate(0px, 0px) scale(1); }
-        }
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-}
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-      `}</style>
-    </div>
-  );
-}
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {activeTab === 'dashboard' && (
+          <div className="space-y-8">
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              {[
+                { 
+                  title: 'Total Articles', 
+                  value: stats?.totalArticles || 0, 
+                  icon: '📰', 
+                  color: 'blue',
+                  onClick: () => setActiveTab('articles')
+                },
+                { 
+                  title: 'Subscribers', 
+                  value: stats?.totalSubscribers || 0, 
+                  icon: '👥', 
+                  color: 'green',
+                  onClick: () => setActiveTab('subscribers')
+                },
+                { 
+                  title: 'Total Views', 
+                  value: stats?.totalViews || 0, 
+                  icon: '👁️', 
+                  color: 'purple',
+                  onClick: () => setActiveTab('analytics')
+                },
+                { 
+                  title: 'Pending Approval', 
+                  value: stats?.pendingApproval || 0, 
+                  icon: '⏳', 
+                  color: 'orange',
+                  onClick: () => setActiveTab('approval')
+                }
+              ].map((stat, index) => (
+                <button
+                  key={index}
+                  onClick={stat.onClick}
+                  className="bg-white p-6 rounded-lg shadow-sm border hover:shadow-md transition-all text-left w-full"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-600">{stat.title}</h3>
+                      <p className={`text-3xl font-bold text-${stat.color}-600 mt-2`}>
+                        {stat.value.toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="text-4xl opacity-20">{stat.icon}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
 
-// Main exported component with authentication
-export default function AdminPage() {
-  return (
-    <AdminAuth>
-      <AdminDashboard />
-    </AdminAuth>
+            {/* Quick Actions */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h2 className="text-xl font-bold mb-6 text-gray-900">⚡ Quick Actions</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <button
+                  onClick={() => setActiveTab('approval')}
+                  className="p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-center group"
+                >
+                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">✋</div>
+                  <div className="text-lg font-semibold text-gray-900">Review Pending Articles</div>
+                  <div className="text-gray-600 mt-1">Check AI-generated content for approval</div>
+                  {stats?.pendingApproval > 0 && (
+                    <div className="mt-2 bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-medium inline-block">
+                      {stats.pendingApproval} waiting
+                    </div>
+                  )}
+                </button>
+                
+                <button 
+                  onClick={() => setActiveTab('create')}
+                  className="p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all text-center group"
+                >
+                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">✍️</div>
+                  <div className="text-lg font-semibold text-gray-900">Create Manual Article</div>
+                  <div className="text-gray-600 mt-1">Add article manually and publish immediately</div>
+                </button>
+                
+                <button 
+                  onClick={() => setActiveTab('analytics')}
+                  className="p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-all text-center group"
+                >
+                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">📈</div>
+                  <div className="text-lg font-semibold text-gray-900">View Analytics</div>
+                  <div className="text-gray-600 mt-1">Check performance metrics and trends</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'approval' && <ApprovalDashboard />}
+        {activeTab === 'articles' && <ArticlesList />}
+        {activeTab === 'subscribers' && <SubscribersList />}
+        {activeTab === 'create' && <CreateArticleForm onSuccess={() => { fetchStats(); setActiveTab('articles'); }} />}
+        {activeTab === 'analytics' && <Analytics />}
+      </div>
+    </div>
   );
 }

@@ -1,35 +1,74 @@
 {
-  "name": "admin-portal",
-  "version": "0.1.0",
+  "name": "ai-news-admin-portal",
+  "version": "1.0.0",
+  "description": "AI News Admin Portal - Manage news articles and automation",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "next start",
     "lint": "next lint",
-    "export": "next export",
-    "pages:build": "npx @cloudflare/next-on-pages",
-    "preview": "npm run pages:build && wrangler pages dev",
-    "deploy": "npm run pages:build && wrangler pages deploy"
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
+    "deploy": "npm run build && wrangler pages deploy out --project-name ai-news-admin",
+    "deploy:production": "npm run lint && npm run type-check && npm run build && wrangler pages deploy out --project-name ai-news-admin",
+    "clean": "rm -rf .next out",
+    "preview": "npm run build && npx serve out"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.51.0",
-    "axios": "^1.10.0",
-    "next": "15.4.1",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "next": "^15.4.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "15.4.1",
-    "tailwindcss": "^4",
-    "typescript": "^5",
-    "@cloudflare/next-on-pages": "^1",
-    "wrangler": "^3.78.0"
-  }
+    "@tailwindcss/forms": "^0.5.0",
+    "@tailwindcss/typography": "^0.5.0",
+    "@types/node": "^24.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.30",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "wrangler": "^3.114.11"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "keywords": [
+    "ai",
+    "news",
+    "admin",
+    "nextjs",
+    "react",
+    "typescript",
+    "tailwind",
+    "automation"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/ai-news-app.git",
+    "directory": "services/admin-portal"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/ai-news-app/issues"
+  },
+  "homepage": "https://ai-news-admin.pages.dev"
 }
