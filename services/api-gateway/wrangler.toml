@@ -1,1 +1,13 @@
+name = "ai-news-api"
+main = "src/index.js"
+compatibility_date = "2024-07-19"
+compatibility_flags = ["nodejs_compat_populate_process_env"]
 
+[vars]
+NODE_ENV = "production"
+SUPABASE_URL = "https://khpnsigvensxkxdntgqz.supabase.co"
+SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtocG5zaWd2ZW5zeGt4ZG50Z3F6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MjY3NDYwNCwiZXhwIjoyMDY4MjUwNjA0fQ.PbPUfG8GI_X_lPfslVSvVRUkXcL-T3kRcDsTc9K-YcI"
+ADMIN_EMAIL = "admin@ainews.com"
+ADMIN_PASSWORD = "admin123"
+N8N_WEBHOOK_SECRET = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmYmE2ODZhZC0yMzIyLTQwMDAtOTg5NS00YTQyMDY1NzI3OGUiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzUzMzUzMTI0LCJleHAiOjE3ODI4NDQyMDB9.aLh1FNqqLT8-D0rBUtv4PEwYJxQ6kzF-9JF5Ja62RUo"
+OPENAI_API_KEY = "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"
