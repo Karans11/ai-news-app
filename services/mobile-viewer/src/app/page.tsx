@@ -598,10 +598,14 @@ function ArticleCard({
         {article.title}
       </h2>
 
-      {/* Summary */}
-      <p className="text-gray-300 text-lg leading-relaxed mb-6 flex-grow">
-        {article.summary}
-      </p>
+      {/* Summary - Fixed minimum height container for consistent sizing */}
+      <div className="mb-6 flex-grow flex flex-col">
+        <div className="min-h-[180px] flex flex-col">
+          <p className="text-gray-300 text-lg leading-relaxed flex-grow">
+            {article.summary}
+          </p>
+        </div>
+      </div>
 
       {/* Stats */}
       <div className="flex items-center justify-between mb-6 text-sm text-gray-500">

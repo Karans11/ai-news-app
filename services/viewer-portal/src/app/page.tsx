@@ -294,20 +294,9 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
     });
   };
 
+  // No truncation - show full summary for all 90+ words
   const formatSummary = (summary: string) => {
-    const minChars = 90;
-    const maxChars = 200;
-    
-    if (summary.length <= maxChars) {
-      return summary;
-    }
-    
-    let cutoff = summary.lastIndexOf(' ', maxChars);
-    if (cutoff < minChars) {
-      cutoff = maxChars;
-    }
-    
-    return summary.substring(0, cutoff).trim() + '...';
+    return summary; // Return the complete summary without any truncation
   };
 
   return (
@@ -319,7 +308,7 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
       <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-0 group-hover:opacity-75 transition duration-1000"></div>
       
       {/* Card content */}
-      <div className="relative bg-black/40 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-300">
+      <div className="relative bg-black/40 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-300 flex flex-col min-h-[520px]">
         {article.image_url && (
           <div className="h-48 overflow-hidden relative">
             <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
@@ -334,7 +323,7 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
           </div>
         )}
         
-        <div className="p-6">
+        <div className="p-6 flex flex-col flex-grow">
           {/* Category and Date */}
           <div className="flex items-center justify-between mb-3">
             <span className="px-3 py-1 text-xs font-semibold bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
@@ -350,13 +339,17 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
             {article.title}
           </h2>
           
-          {/* Summary */}
-          <p className="text-gray-300 text-sm mb-4 leading-relaxed">
-            {formatSummary(article.summary)}
-          </p>
+          {/* Summary - Fixed minimum height for consistent card sizing */}
+          <div className="flex-grow flex flex-col mb-4">
+            <div className="min-h-[120px] flex flex-col">
+              <p className="text-gray-300 text-sm leading-relaxed flex-grow">
+                {formatSummary(article.summary)}
+              </p>
+            </div>
+          </div>
           
           {/* Footer */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mt-auto">
             <a
               href={article.original_url}
               target="_blank"
