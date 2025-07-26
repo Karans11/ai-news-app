@@ -25,16 +25,16 @@ export default function Home() {
   
   // AI Quotes array
   const aiQuotes = [
-    "AI won't replace you — but ignoring it just might.",
-    "Humans won't be replaced by AI, but by humans who use it better.",
+    "AI won&apos;t replace you — but ignoring it just might.",
+    "Humans won&apos;t be replaced by AI, but by humans who use it better.",
     "Master AI — before it becomes your competition.",
     "Those who embrace AI will outpace those who fear it.",
-    "Stay ahead: AI won't steal your job, but someone using AI could.",
+    "Stay ahead: AI won&apos;t steal your job, but someone using AI could.",
     "The future belongs to humans who learn AI, not those who fight it.",
-    "It's not AI vs. you — it's AI with you, or AI without you.",
-    "Don't fear AI — fear falling behind it.",
+    "It&apos;s not AI vs. you — it&apos;s AI with you, or AI without you.",
+    "Don&apos;t fear AI — fear falling behind it.",
     "Humans with AI are unstoppable; humans without it are replaceable.",
-    "AI won't replace talent — but it will amplify those who adapt."
+    "AI won&apos;t replace talent — but it will amplify those who adapt."
   ];
 
   useEffect(() => {
@@ -161,7 +161,7 @@ export default function Home() {
                 <p className={`text-xl text-gray-300 italic transition-all duration-500 transform ${
                   isQuoteVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
                 }`}>
-                  "{aiQuotes[currentQuoteIndex]}"
+                  &ldquo;{aiQuotes[currentQuoteIndex]}&rdquo;
                 </p>
               </div>
               
@@ -236,9 +236,10 @@ export default function Home() {
               <p className="text-gray-400">No articles available</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="space-y-6">
               {articles
                 .filter((article) => selectedCategory === 'All' || article.category === selectedCategory)
+                .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()) // Latest first
                 .map((article, index) => (
                   <ArticleCard key={article.id} article={article} index={index} />
                 ))}
@@ -257,7 +258,7 @@ export default function Home() {
             </div>
             <p className="text-gray-400">&copy; 2024 AI News Portal. Powered by the future.</p>
             <p className="text-sm text-gray-500 mt-2">
-              Aggregating intelligence from the world's leading AI sources.
+              Aggregating intelligence from the world&apos;s leading AI sources.
             </p>
           </div>
         </footer>
@@ -294,7 +295,7 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
     });
   };
 
-  // No truncation - show full summary for all 90+ words
+  // Show full summary - no truncation for 90+ words
   const formatSummary = (summary: string) => {
     return summary; // Return the complete summary without any truncation
   };
@@ -307,66 +308,95 @@ function ArticleCard({ article, index }: { article: Article; index: number }) {
       {/* Glow effect */}
       <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-0 group-hover:opacity-75 transition duration-1000"></div>
       
-      {/* Card content */}
-      <div className="relative bg-black/40 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-300 flex flex-col min-h-[520px]">
-        {article.image_url && (
-          <div className="h-48 overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
-            <img
-              src={article.image_url}
-              alt={article.title}
-              className="w-full h-full object-cover transform group-hover:scale-110 transition duration-700"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          </div>
-        )}
-        
-        <div className="p-6 flex flex-col flex-grow">
+      {/* Simple Card Layout - CONTENT ONLY */}
+      <div className="relative bg-black/40 backdrop-blur-xl rounded-2xl overflow-hidden border border-white/10 hover:border-white/20 transition-all duration-300">
+        <div style={{
+          padding: '24px',
+          color: 'white'
+        }}>
           {/* Category and Date */}
-          <div className="flex items-center justify-between mb-3">
-            <span className="px-3 py-1 text-xs font-semibold bg-gradient-to-r from-purple-600 to-pink-600 rounded-full">
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: '16px'
+          }}>
+            <span style={{
+              background: 'linear-gradient(to right, #9333EA, #EC4899)',
+              color: 'white',
+              padding: '6px 16px',
+              borderRadius: '12px',
+              fontSize: '13px',
+              fontWeight: '600'
+            }}>
               {article.category}
             </span>
-            <span className="text-xs text-gray-400">
+            <span style={{ fontSize: '13px', color: '#9CA3AF' }}>
               {formatDate(article.published_at)}
             </span>
           </div>
           
           {/* Title */}
-          <h2 className="text-xl font-bold mb-3 line-clamp-2 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-blue-400 group-hover:to-purple-400 transition duration-300">
+          <h2 style={{
+            fontSize: '24px',
+            fontWeight: 'bold',
+            marginBottom: '16px',
+            lineHeight: '1.3',
+            color: 'white'
+          }}>
             {article.title}
           </h2>
           
-          {/* Summary - Fixed minimum height for consistent card sizing */}
-          <div className="flex-grow flex flex-col mb-4">
-            <div className="min-h-[120px] flex flex-col">
-              <p className="text-gray-300 text-sm leading-relaxed flex-grow">
-                {formatSummary(article.summary)}
-              </p>
-            </div>
+          {/* Summary - Full 90+ words */}
+          <div style={{ marginBottom: '20px' }}>
+            <p style={{
+              color: '#D1D5DB',
+              fontSize: '16px',
+              lineHeight: '1.6'
+            }}>
+              {formatSummary(article.summary)}
+            </p>
           </div>
-          
-          {/* Footer */}
-          <div className="flex items-center justify-between mt-auto">
+
+          {/* Bottom Section */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+            paddingTop: '16px'
+          }}>
             <a
               href={article.original_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center space-x-2 text-purple-400 hover:text-pink-400 transition group/link"
+              style={{
+                background: 'linear-gradient(to right, #9333EA, #EC4899)',
+                color: 'white',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                fontSize: '15px',
+                fontWeight: '500',
+                textDecoration: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
             >
-              <span className="text-sm font-medium">Explore full article</span>
-              <svg className="w-4 h-4 transform group-hover/link:translate-x-1 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
+              <span>Read Full Article</span>
+              <span>→</span>
             </a>
-            <div className="flex items-center space-x-1 text-xs text-gray-400">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-              <span>{article.view_count}</span>
+            
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              fontSize: '14px',
+              color: '#9CA3AF'
+            }}>
+              <span>👁️ {article.view_count} views</span>
+              <span>•</span>
+              <span>2 min read</span>
             </div>
           </div>
         </div>

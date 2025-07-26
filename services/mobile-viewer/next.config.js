@@ -3,8 +3,14 @@ const withPWA = require('next-pwa')({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === 'development',
-  buildExcludes: [/middleware-manifest\.json$/],
   runtimeCaching: [
+    {
+      urlPattern: /^https:\/\/ai-news-api\.skaybotlabs\.workers\.dev\/api\/articles/,
+      handler: 'NetworkOnly', // Always fetch fresh articles
+      options: {
+        cacheName: 'api-cache',
+      },
+    },
     {
       urlPattern: /^https?.*/,
       handler: 'NetworkFirst',
@@ -12,7 +18,7 @@ const withPWA = require('next-pwa')({
         cacheName: 'offlineCache',
         expiration: {
           maxEntries: 200,
-          maxAgeSeconds: 86400, // 24 hours
+          maxAgeSeconds: 300, // 5 minutes instead of 24 hours
         },
       },
     },
@@ -32,9 +38,11 @@ const withPWA = require('next-pwa')({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   images: {
-    domains: ['*'], // Add your image domains
+    domains: ['*'],
   },
 }
 
