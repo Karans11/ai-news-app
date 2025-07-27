@@ -1,10 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
-import AuthModal from '@/components/auth/AuthModal';
-import UserMenu from '@/components/auth/UserMenu';
 
 interface Article {
   id: string;
@@ -35,7 +31,6 @@ export default function EnhancedMobileHome() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'all' | 'bookmarks'>('all');
   const [showMenu, setShowMenu] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [direction, setDirection] = useState(0);
   const [swipeDirection, setSwipeDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [userStats, setUserStats] = useState<UserStats>({
@@ -46,19 +41,12 @@ export default function EnhancedMobileHome() {
     streak: 1
   });
 
-  // Authentication context
-  const { user, profile, loading: authLoading } = useAuth();
-
   // Safe environment variable access
   const API_URL = 'https://ai-news-api.skaybotlabs.workers.dev';
 
   useEffect(() => {
     fetchArticles();
-    if (user) {
-      loadUserStats();
-    } else {
-      loadLocalUserStats();
-    }
+    loadUserStats();
 
     // Auto-refresh when app becomes visible
     const handleVisibilityChange = () => {
@@ -78,7 +66,7 @@ export default function EnhancedMobileHome() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [user]);
+  }, []);
 
   const fetchArticles = async () => {
     try {
@@ -99,6 +87,7 @@ export default function EnhancedMobileHome() {
         const articlesWithSource = data.data.map((article: Article) => ({
           ...article,
           source: article.source || article.original_url.split('/')[2]?.replace('www.', '') || 'AI News',
+          // Use the server's published_at time as-is, don't modify it
           published_at: article.published_at
         }));
         setArticles(articlesWithSource);
@@ -113,48 +102,7 @@ export default function EnhancedMobileHome() {
     }
   };
 
-  const loadUserStats = async () => {
-    if (!user) return;
-
-    try {
-      // Load user stats from Supabase
-      const { data, error } = await supabase
-        .from('user_stats')
-        .select('*')
-        .eq('user_id', user.id);
-
-      if (error) {
-        console.error('Error loading user stats:', error);
-        return;
-      }
-
-      // Convert to local format
-      const readArticles = new Set(
-        data.filter(stat => stat.action === 'read').map(stat => stat.article_id)
-      );
-      const bookmarkedArticles = new Set(
-        data.filter(stat => stat.action === 'bookmark').map(stat => stat.article_id)
-      );
-
-      setUserStats({
-        readArticles,
-        bookmarkedArticles,
-        readingTime: data.filter(stat => stat.action === 'read').length * 0.5,
-        articlesReadToday: data.filter(stat => 
-          stat.action === 'read' && 
-          new Date(stat.created_at).toDateString() === new Date().toDateString()
-        ).length,
-        streak: 1 // Calculate properly later
-      });
-
-    } catch (error) {
-      console.error('Error in loadUserStats:', error);
-      // Fallback to localStorage for guest users
-      loadLocalUserStats();
-    }
-  };
-
-  const loadLocalUserStats = () => {
+  const loadUserStats = () => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('userStats');
       if (saved) {
@@ -168,68 +116,18 @@ export default function EnhancedMobileHome() {
     }
   };
 
-  const saveUserStats = async (stats: UserStats) => {
-    if (user) {
-      // Save to Supabase for authenticated users - we'll implement incremental updates
-      // For now, we'll just save locally and sync incrementally through updateUserAction
-    } else {
-      // Save to localStorage for guest users
-      if (typeof window !== 'undefined') {
-        const toSave = {
-          ...stats,
-          readArticles: Array.from(stats.readArticles),
-          bookmarkedArticles: Array.from(stats.bookmarkedArticles)
-        };
-        localStorage.setItem('userStats', JSON.stringify(toSave));
-      }
+  const saveUserStats = (stats: UserStats) => {
+    if (typeof window !== 'undefined') {
+      const toSave = {
+        ...stats,
+        readArticles: Array.from(stats.readArticles),
+        bookmarkedArticles: Array.from(stats.bookmarkedArticles)
+      };
+      localStorage.setItem('userStats', JSON.stringify(toSave));
     }
   };
 
-  const updateUserAction = async (articleId: string, action: 'read' | 'bookmark' | 'share') => {
-    if (!user) return;
-
-    try {
-      if (action === 'bookmark') {
-        // Check if already bookmarked
-        const exists = userStats.bookmarkedArticles.has(articleId);
-        if (exists) {
-          // Remove bookmark
-          await supabase
-            .from('user_stats')
-            .delete()
-            .eq('user_id', user.id)
-            .eq('article_id', articleId)
-            .eq('action', 'bookmark');
-        } else {
-          // Add bookmark
-          await supabase
-            .from('user_stats')
-            .insert({
-              user_id: user.id,
-              article_id: articleId,
-              action: 'bookmark'
-            });
-        }
-      } else {
-        // Add action (read, share) - use upsert to avoid duplicates
-        await supabase
-          .from('user_stats')
-          .upsert({
-            user_id: user.id,
-            article_id: articleId,
-            action: action
-          }, {
-            onConflict: 'user_id,article_id,action'
-          });
-      }
-    } catch (error) {
-      console.error('Error updating user action:', error);
-    }
-  };
-
-  const markAsRead = useCallback(async (articleId: string) => {
-    if (userStats.readArticles.has(articleId)) return;
-
+  const markAsRead = useCallback((articleId: string) => {
     setUserStats(prev => {
       const newStats = {
         ...prev,
@@ -240,13 +138,9 @@ export default function EnhancedMobileHome() {
       saveUserStats(newStats);
       return newStats;
     });
+  }, []);
 
-    if (user) {
-      await updateUserAction(articleId, 'read');
-    }
-  }, [userStats.readArticles, user]);
-
-  const toggleBookmark = useCallback(async (articleId: string) => {
+  const toggleBookmark = useCallback((articleId: string) => {
     setUserStats(prev => {
       const newBookmarks = new Set(prev.bookmarkedArticles);
       if (newBookmarks.has(articleId)) {
@@ -258,11 +152,7 @@ export default function EnhancedMobileHome() {
       saveUserStats(newStats);
       return newStats;
     });
-
-    if (user) {
-      await updateUserAction(articleId, 'bookmark');
-    }
-  }, [user]);
+  }, []);
 
   const filteredArticles = useMemo(() => {
     let filtered = articles;
@@ -289,10 +179,6 @@ export default function EnhancedMobileHome() {
   }, [filteredArticles.length]);
 
   const shareArticle = async (article: Article) => {
-    if (user) {
-      await updateUserAction(article.id, 'share');
-    }
-
     if (navigator.share) {
       try {
         await navigator.share({
@@ -310,19 +196,23 @@ export default function EnhancedMobileHome() {
 
   const formatTimeAgo = (dateString: string) => {
     try {
+      // Handle different date formats more robustly
       let date: Date;
       
       if (dateString.includes('T') || dateString.includes('Z')) {
+        // ISO format
         date = new Date(dateString);
       } else {
+        // Try parsing as is first, then try adding timezone
         date = new Date(dateString);
         if (isNaN(date.getTime())) {
-          date = new Date(dateString + 'Z');
+          date = new Date(dateString + 'Z'); // Add UTC timezone
         }
       }
       
       const now = new Date();
       
+      // Check if date is valid
       if (isNaN(date.getTime())) {
         console.warn('Invalid date:', dateString);
         return 'just now';
@@ -330,6 +220,7 @@ export default function EnhancedMobileHome() {
       
       const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
       
+      // Handle negative time (future dates) - treat as just now
       if (seconds < 0) {
         console.log('Future date detected:', dateString, 'treating as just now');
         return 'just now';
@@ -346,9 +237,11 @@ export default function EnhancedMobileHome() {
   };
 
   const openArticle = (article: Article) => {
+    // Mark as read when opening
     if (!userStats.readArticles.has(article.id)) {
       markAsRead(article.id);
     }
+    // Open in new tab/window
     window.open(article.original_url, '_blank', 'noopener,noreferrer');
   };
 
@@ -377,12 +270,15 @@ export default function EnhancedMobileHome() {
     const deltaY = touchStart.y - touchEnd.y;
     const minSwipeDistance = 50;
     
+    // Only handle horizontal swipes
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > minSwipeDistance) {
       if (deltaX > 0) {
+        // Swipe left - next article
         if (currentIndex < filteredArticles.length - 1) {
           navigateArticle(1);
         }
       } else {
+        // Swipe right - previous article
         if (currentIndex > 0) {
           navigateArticle(-1);
         }
@@ -419,13 +315,13 @@ export default function EnhancedMobileHome() {
       if (!userStats.readArticles.has(articleId)) {
         const timer = setTimeout(() => {
           markAsRead(articleId);
-        }, 2000);
+        }, 2000); // Mark as read after 2 seconds of viewing
         return () => clearTimeout(timer);
       }
     }
   }, [currentIndex, filteredArticles, userStats.readArticles, markAsRead]);
 
-  if (loading || authLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-white text-center">
@@ -472,20 +368,6 @@ export default function EnhancedMobileHome() {
             <span className="text-xs text-gray-400">
               {filteredArticles.length} stories
             </span>
-          </div>
-
-          {/* User Section */}
-          <div className="flex items-center space-x-2">
-            {user && profile ? (
-              <UserMenu />
-            ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
-              >
-                Sign In
-              </button>
-            )}
           </div>
         </div>
         
@@ -571,7 +453,6 @@ export default function EnhancedMobileHome() {
                 formatTimeAgo={formatTimeAgo}
                 index={currentIndex}
                 total={filteredArticles.length}
-                isAuthenticated={!!user}
               />
             </motion.div>
           </AnimatePresence>
@@ -673,11 +554,6 @@ export default function EnhancedMobileHome() {
                 
                 <button 
                   onClick={() => {
-                    if (!user) {
-                      setShowAuthModal(true);
-                      setShowMenu(false);
-                      return;
-                    }
                     setViewMode('bookmarks');
                     setCurrentIndex(0);
                     setShowMenu(false);
@@ -687,38 +563,13 @@ export default function EnhancedMobileHome() {
                   }`}
                 >
                   <span>🔖 Bookmarks</span>
-                  <span className="text-gray-400">
-                    {user ? userStats.bookmarkedArticles.size : '•'}
-                  </span>
+                  <span className="text-gray-400">{userStats.bookmarkedArticles.size}</span>
                 </button>
               </div>
-
-              {!user && (
-                <div className="mt-8 p-4 bg-gray-800 rounded-lg">
-                  <p className="text-gray-300 text-sm mb-3">
-                    Sign in to sync your bookmarks and reading progress across devices
-                  </p>
-                  <button
-                    onClick={() => {
-                      setShowAuthModal(true);
-                      setShowMenu(false);
-                    }}
-                    className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition"
-                  >
-                    Sign In / Sign Up
-                  </button>
-                </div>
-              )}
             </motion.div>
           </>
         )}
       </AnimatePresence>
-
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => setShowAuthModal(false)}
-      />
 
       <style jsx global>{`
         .scrollbar-hide {
@@ -750,8 +601,7 @@ function ArticleCard({
   onOpen,
   formatTimeAgo,
   index,
-  total,
-  isAuthenticated
+  total
 }: {
   article: Article;
   isRead: boolean;
@@ -762,7 +612,6 @@ function ArticleCard({
   formatTimeAgo: (date: string) => string;
   index: number;
   total: number;
-  isAuthenticated: boolean;
 }) {
   return (
     <div 
@@ -826,8 +675,7 @@ function ArticleCard({
             isBookmarked
               ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-white shadow-lg'
               : 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:from-yellow-600 hover:to-amber-600 hover:text-white'
-          } ${!isAuthenticated ? 'opacity-75' : ''}`}
-          title={!isAuthenticated ? 'Sign in to bookmark articles' : ''}
+          }`}
         >
           <span className="text-lg">{isBookmarked ? '⭐' : '🤍'}</span>
           <span className="text-sm">{isBookmarked ? 'Saved' : 'Save'}</span>

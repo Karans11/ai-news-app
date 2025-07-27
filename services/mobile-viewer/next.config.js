@@ -6,7 +6,7 @@ const withPWA = require('next-pwa')({
   runtimeCaching: [
     {
       urlPattern: /^https:\/\/ai-news-api\.skaybotlabs\.workers\.dev\/api\/articles/,
-      handler: 'NetworkOnly', // Always fetch fresh articles
+      handler: 'NetworkOnly',
       options: {
         cacheName: 'api-cache',
       },
@@ -18,7 +18,7 @@ const withPWA = require('next-pwa')({
         cacheName: 'offlineCache',
         expiration: {
           maxEntries: 200,
-          maxAgeSeconds: 300, // 5 minutes instead of 24 hours
+          maxAgeSeconds: 300,
         },
       },
     },
@@ -29,7 +29,7 @@ const withPWA = require('next-pwa')({
         cacheName: 'image-cache',
         expiration: {
           maxEntries: 100,
-          maxAgeSeconds: 604800, // 7 days
+          maxAgeSeconds: 604800,
         },
       },
     },
@@ -43,7 +43,28 @@ const nextConfig = {
   },
   images: {
     domains: ['*'],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**',
+      },
+    ],
   },
+  // Fix cross-origin warning
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: '*',
+          },
+        ],
+      },
+    ]
+  },
+  // Remove the experimental section - not needed anymore
 }
 
 module.exports = withPWA(nextConfig)
