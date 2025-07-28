@@ -1,7 +1,8 @@
-// app/layout.tsx
-import type { Metadata } from 'next'
+// app/layout.tsx (Fixed for Next.js 14)
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import { AuthProvider } from '@/contexts/AuthContext'
+import AuthGuard from '@/components/auth/AuthGuard'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -10,19 +11,20 @@ export const metadata: Metadata = {
   title: 'AI Bytes - Latest AI News',
   description: 'Stay updated with the latest AI news and insights',
   manifest: '/manifest.json',
-  themeColor: '#000000',
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: 'cover'
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
     title: 'AI Bytes'
   }
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+  themeColor: '#000000'
 }
 
 export default function RootLayout({
@@ -33,6 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="AI Bytes" />
@@ -41,7 +44,9 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <AuthProvider>
-          {children}
+          <AuthGuard>
+            {children}
+          </AuthGuard>
         </AuthProvider>
       </body>
     </html>

@@ -157,17 +157,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const resendVerification = async () => {
-    if (!user?.email) return { error: new Error('No user email found') }
-    
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: user.email,
-      options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
-      }
-    })
-    return { error }
+  if (!user?.email) {
+    console.error('No user email found for resend verification');
+    return { error: null }; // Return null instead of generic Error
   }
+  
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: user.email,
+    options: {
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`
+    }
+  });
+  
+  return { error }; // This will be AuthError | null from Supabase
+};
 
   const value = {
     user,

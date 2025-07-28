@@ -1,9 +1,10 @@
+// Clean production version - replace your page.tsx with this
+
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import AuthModal from '@/components/auth/AuthModal';
 import UserMenu from '@/components/auth/UserMenu';
 
 interface Article {
@@ -29,13 +30,31 @@ interface UserStats {
   streak: number;
 }
 
+interface UserPreferences {
+  selectedCategories: string[];
+  filterMode: 'all' | 'selected';
+}
+
+const AVAILABLE_CATEGORIES = [
+  'AI Models',
+  'Machine Learning',
+  'Policy',
+  'Research',
+  'Industry News',
+  'Startups',
+  'AI Security',
+  'AI Tools',
+  'Computer Vision',
+  'Natural Language Processing',
+  'Robotics'
+];
+
 export default function EnhancedMobileHome() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'all' | 'bookmarks'>('all');
   const [showMenu, setShowMenu] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [direction, setDirection] = useState(0);
   const [swipeDirection, setSwipeDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [userStats, setUserStats] = useState<UserStats>({
@@ -45,40 +64,25 @@ export default function EnhancedMobileHome() {
     articlesReadToday: 0,
     streak: 1
   });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({
+    selectedCategories: [...AVAILABLE_CATEGORIES],
+    filterMode: 'all'
+  });
+  const [showCategorySettings, setShowCategorySettings] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
-  // Authentication context
   const { user, profile, loading: authLoading } = useAuth();
-
-  // Safe environment variable access
   const API_URL = 'https://ai-news-api.skaybotlabs.workers.dev';
 
   useEffect(() => {
-    fetchArticles();
-    if (user) {
-      loadUserStats();
-    } else {
-      loadLocalUserStats();
-    }
-
-    // Auto-refresh when app becomes visible
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        fetchArticles();
-      }
-    };
-
-    const handleFocus = () => {
+    if (!authLoading && user) {
       fetchArticles();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [user]);
+      loadUserStats();
+      loadUserPreferences();
+    } else if (!authLoading && !user) {
+      setLoading(false);
+    }
+  }, [authLoading, user]);
 
   const fetchArticles = async () => {
     try {
@@ -106,7 +110,8 @@ export default function EnhancedMobileHome() {
         setArticles([]);
       }
     } catch (error) {
-      console.error('Error fetching articles:', error);
+      // Log error for debugging but don't expose details
+      console.error('Failed to fetch articles');
       setArticles([]);
     } finally {
       setLoading(false);
@@ -117,18 +122,16 @@ export default function EnhancedMobileHome() {
     if (!user) return;
 
     try {
-      // Load user stats from Supabase
       const { data, error } = await supabase
         .from('user_stats')
         .select('*')
         .eq('user_id', user.id);
 
       if (error) {
-        console.error('Error loading user stats:', error);
+        console.error('Failed to load user stats');
         return;
       }
 
-      // Convert to local format
       const readArticles = new Set(
         data.filter(stat => stat.action === 'read').map(stat => stat.article_id)
       );
@@ -139,61 +142,145 @@ export default function EnhancedMobileHome() {
       setUserStats({
         readArticles,
         bookmarkedArticles,
-        readingTime: data.filter(stat => stat.action === 'read').length * 0.5,
+        readingTime: data.filter(stat => stat.action === 'read').length * 2,
         articlesReadToday: data.filter(stat => 
           stat.action === 'read' && 
           new Date(stat.created_at).toDateString() === new Date().toDateString()
         ).length,
-        streak: 1 // Calculate properly later
+        streak: 1
       });
 
     } catch (error) {
-      console.error('Error in loadUserStats:', error);
-      // Fallback to localStorage for guest users
-      loadLocalUserStats();
+      console.error('Failed to load user stats');
     }
   };
 
-  const loadLocalUserStats = () => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('userStats');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setUserStats({
-          ...parsed,
-          readArticles: new Set(parsed.readArticles || []),
-          bookmarkedArticles: new Set(parsed.bookmarkedArticles || [])
+  const loadUserPreferences = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('user_preferences')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Failed to load preferences');
+        setPreferencesLoaded(true);
+        return;
+      }
+
+      if (data) {
+        setUserPreferences({
+          selectedCategories: data.selected_categories || [...AVAILABLE_CATEGORIES],
+          filterMode: data.filter_mode || 'all'
         });
       }
+      setPreferencesLoaded(true);
+    } catch (error) {
+      console.error('Failed to load preferences');
+      setPreferencesLoaded(true);
     }
   };
 
-  const saveUserStats = async (stats: UserStats) => {
-    if (user) {
-      // Save to Supabase for authenticated users - we'll implement incremental updates
-      // For now, we'll just save locally and sync incrementally through updateUserAction
-    } else {
-      // Save to localStorage for guest users
-      if (typeof window !== 'undefined') {
-        const toSave = {
-          ...stats,
-          readArticles: Array.from(stats.readArticles),
-          bookmarkedArticles: Array.from(stats.bookmarkedArticles)
-        };
-        localStorage.setItem('userStats', JSON.stringify(toSave));
+  const saveUserPreferences = async (preferences: UserPreferences) => {
+    if (!user || !preferencesLoaded) return;
+
+    try {
+      const { data: updateData, error: updateError } = await supabase
+        .from('user_preferences')
+        .update({
+          selected_categories: preferences.selectedCategories,
+          filter_mode: preferences.filterMode,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.id)
+        .select();
+
+      if (updateError) {
+        console.error('Failed to update preferences');
+        return;
       }
+
+      if (!updateData || updateData.length === 0) {
+        const { error: insertError } = await supabase
+          .from('user_preferences')
+          .insert({
+            user_id: user.id,
+            selected_categories: preferences.selectedCategories,
+            filter_mode: preferences.filterMode,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (insertError) {
+          console.error('Failed to create preferences');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save preferences');
     }
   };
+
+   const toggleCategorySelection = (category: string) => {
+  setUserPreferences(prev => {
+    const newSelectedCategories = prev.selectedCategories.includes(category)
+      ? prev.selectedCategories.filter(c => c !== category)
+      : [...prev.selectedCategories, category];
+    
+    const newPreferences: UserPreferences = {
+      ...prev,
+      selectedCategories: newSelectedCategories
+    };
+    
+    saveUserPreferences(newPreferences);
+    return newPreferences;
+  });
+};
+
+  const toggleFilterMode = () => {
+  setUserPreferences(prev => {
+    const newPreferences: UserPreferences = {
+      ...prev,
+      filterMode: prev.filterMode === 'all' ? 'selected' : 'all'
+    };
+    
+    saveUserPreferences(newPreferences);
+    return newPreferences;
+  });
+};
+
+  const selectAllCategories = () => {
+  setUserPreferences(prev => {
+    const newPreferences = {
+      ...prev,
+      selectedCategories: [...AVAILABLE_CATEGORIES]
+    };
+    
+    saveUserPreferences(newPreferences);
+    return newPreferences;
+  });
+};
+  const deselectAllCategories = () => {
+  setUserPreferences(prev => {
+    const newPreferences: UserPreferences = {
+      ...prev,
+      selectedCategories: []
+    };
+    
+    saveUserPreferences(newPreferences);
+    return newPreferences;
+  });
+};
 
   const updateUserAction = async (articleId: string, action: 'read' | 'bookmark' | 'share') => {
     if (!user) return;
 
     try {
       if (action === 'bookmark') {
-        // Check if already bookmarked
         const exists = userStats.bookmarkedArticles.has(articleId);
         if (exists) {
-          // Remove bookmark
           await supabase
             .from('user_stats')
             .delete()
@@ -201,7 +288,6 @@ export default function EnhancedMobileHome() {
             .eq('article_id', articleId)
             .eq('action', 'bookmark');
         } else {
-          // Add bookmark
           await supabase
             .from('user_stats')
             .insert({
@@ -211,7 +297,6 @@ export default function EnhancedMobileHome() {
             });
         }
       } else {
-        // Add action (read, share) - use upsert to avoid duplicates
         await supabase
           .from('user_stats')
           .upsert({
@@ -223,7 +308,7 @@ export default function EnhancedMobileHome() {
           });
       }
     } catch (error) {
-      console.error('Error updating user action:', error);
+      console.error('Failed to update user action');
     }
   };
 
@@ -234,16 +319,13 @@ export default function EnhancedMobileHome() {
       const newStats = {
         ...prev,
         readArticles: new Set(prev.readArticles).add(articleId),
-        readingTime: prev.readingTime + 0.5,
+        readingTime: prev.readingTime + 2,
         articlesReadToday: prev.articlesReadToday + 1
       };
-      saveUserStats(newStats);
       return newStats;
     });
 
-    if (user) {
-      await updateUserAction(articleId, 'read');
-    }
+    await updateUserAction(articleId, 'read');
   }, [userStats.readArticles, user]);
 
   const toggleBookmark = useCallback(async (articleId: string) => {
@@ -255,13 +337,10 @@ export default function EnhancedMobileHome() {
         newBookmarks.add(articleId);
       }
       const newStats = { ...prev, bookmarkedArticles: newBookmarks };
-      saveUserStats(newStats);
       return newStats;
     });
 
-    if (user) {
-      await updateUserAction(articleId, 'bookmark');
-    }
+    await updateUserAction(articleId, 'bookmark');
   }, [user]);
 
   const filteredArticles = useMemo(() => {
@@ -271,10 +350,16 @@ export default function EnhancedMobileHome() {
       filtered = articles.filter(article => userStats.bookmarkedArticles.has(article.id));
     }
     
+    if (userPreferences.filterMode === 'selected' && userPreferences.selectedCategories.length > 0) {
+      filtered = filtered.filter(article => 
+        userPreferences.selectedCategories.includes(article.category)
+      );
+    }
+    
     return filtered.sort((a, b) => {
       return new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
     });
-  }, [articles, viewMode, userStats.bookmarkedArticles]);
+  }, [articles, viewMode, userStats.bookmarkedArticles, userPreferences]);
 
   const navigateArticle = useCallback((newDirection: number) => {
     setDirection(newDirection);
@@ -289,9 +374,7 @@ export default function EnhancedMobileHome() {
   }, [filteredArticles.length]);
 
   const shareArticle = async (article: Article) => {
-    if (user) {
-      await updateUserAction(article.id, 'share');
-    }
+    await updateUserAction(article.id, 'share');
 
     if (navigator.share) {
       try {
@@ -301,7 +384,7 @@ export default function EnhancedMobileHome() {
           url: article.original_url,
         });
       } catch (err) {
-        console.log('Error sharing:', err);
+        // Share failed - silent fail
       }
     } else {
       navigator.clipboard.writeText(article.original_url);
@@ -324,14 +407,12 @@ export default function EnhancedMobileHome() {
       const now = new Date();
       
       if (isNaN(date.getTime())) {
-        console.warn('Invalid date:', dateString);
         return 'just now';
       }
       
       const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
       
       if (seconds < 0) {
-        console.log('Future date detected:', dateString, 'treating as just now');
         return 'just now';
       }
       
@@ -340,7 +421,6 @@ export default function EnhancedMobileHome() {
       if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
       return `${Math.floor(seconds / 86400)}d ago`;
     } catch (error) {
-      console.error('Error formatting time:', error, dateString);
       return 'just now';
     }
   };
@@ -393,24 +473,7 @@ export default function EnhancedMobileHome() {
   // Reset index when view mode changes
   useEffect(() => {
     setCurrentIndex(0);
-  }, [viewMode]);
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      switch(e.key) {
-        case 'ArrowLeft':
-          if (currentIndex > 0) navigateArticle(-1);
-          break;
-        case 'ArrowRight':
-          if (currentIndex < filteredArticles.length - 1) navigateArticle(1);
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentIndex, filteredArticles, navigateArticle]);
+  }, [viewMode, userPreferences]);
 
   // Mark article as read when viewing
   useEffect(() => {
@@ -419,13 +482,13 @@ export default function EnhancedMobileHome() {
       if (!userStats.readArticles.has(articleId)) {
         const timer = setTimeout(() => {
           markAsRead(articleId);
-        }, 2000);
+        }, 3000);
         return () => clearTimeout(timer);
       }
     }
   }, [currentIndex, filteredArticles, userStats.readArticles, markAsRead]);
 
-  if (loading || authLoading) {
+  if (authLoading || (loading && user)) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-white text-center">
@@ -437,78 +500,90 @@ export default function EnhancedMobileHome() {
     );
   }
 
+  if (!authLoading && !user) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-white text-center">
+          <h1 className="text-2xl font-bold mb-4">Authentication Required</h1>
+          <p className="text-gray-400">Please sign in to continue</p>
+        </div>
+      </div>
+    );
+  }
+
   const currentArticle = filteredArticles[currentIndex];
+  const joinDate = user?.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { 
+    month: 'long', 
+    year: 'numeric' 
+  }) : 'Recently';
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
-      {/* Header with iOS safe area support */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-black/90 backdrop-blur-md border-b border-gray-800"
+      {/* Mobile-Optimized Header */}
+      <header className="fixed top-0 left-0 right-0 z-40 bg-black/90 backdrop-blur-md border-b border-gray-800"
               style={{ 
                 paddingTop: 'env(safe-area-inset-top)', 
                 paddingLeft: 'env(safe-area-inset-left)', 
                 paddingRight: 'env(safe-area-inset-right)' 
               }}>
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center space-x-3">
-            {/* Menu Button */}
+        <div className="flex items-center justify-between px-3 py-2">
+          <div className="flex items-center space-x-2">
             <button
               onClick={() => setShowMenu(!showMenu)}
-              className="text-gray-400 text-xl hover:text-white transition-colors"
+              className="text-gray-400 text-xl hover:text-white transition-colors p-2 -ml-2"
             >
               ☰
             </button>
             
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-600 rounded-lg flex items-center justify-center">
-              <span className="text-sm">🤖</span>
+            <div className="w-7 h-7 bg-gradient-to-br from-blue-400 to-purple-600 rounded-lg flex items-center justify-center">
+              <span className="text-xs">🤖</span>
             </div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
+            <h1 className="text-lg font-bold bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
               AI Bytes
             </h1>
+          </div>
+
+          <div className="flex items-center space-x-1">
             {viewMode === 'bookmarks' && (
               <span className="text-xs bg-yellow-600 text-white px-2 py-1 rounded-full">
                 Bookmarks
               </span>
             )}
-            <span className="text-xs text-gray-400">
-              {filteredArticles.length} stories
-            </span>
+            {userPreferences.filterMode === 'selected' && (
+              <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded-full">
+                Filtered
+              </span>
+            )}
+            <UserMenu />
           </div>
-
-          {/* User Section */}
-          <div className="flex items-center space-x-2">
-            {user && profile ? (
-              <UserMenu />
-            ) : (
+        </div>
+        
+        <div className="px-3 pb-2">
+          <div className="flex items-center justify-between text-xs text-gray-400">
+            <span>{filteredArticles.length} articles</span>
+            {(viewMode !== 'all' || userPreferences.filterMode === 'selected') && (
               <button
-                onClick={() => setShowAuthModal(true)}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition"
+                onClick={() => {
+                  setViewMode('all');
+                  setUserPreferences(prev => ({
+                    ...prev,
+                    filterMode: 'all' as const
+                  }));
+                  setCurrentIndex(0);
+                }}
+                className="text-blue-400 hover:text-blue-300"
               >
-                Sign In
+                ← Show All
               </button>
             )}
           </div>
         </div>
-        
-        {/* Back to All Articles button when not in all mode */}
-        {viewMode !== 'all' && (
-          <div className="px-4 pb-3">
-            <button
-              onClick={() => {
-                setViewMode('all');
-                setCurrentIndex(0);
-              }}
-              className="bg-gray-800 text-gray-300 px-4 py-1 rounded-full text-sm hover:bg-gray-700 transition"
-            >
-              ← Back to All Articles
-            </button>
-          </div>
-        )}
       </header>
 
       {/* Main Content */}
       <div 
-        className={`h-screen ${viewMode !== 'all' ? 'pt-20' : 'pt-16'} pb-20`}
-        style={{ paddingTop: `calc(${viewMode !== 'all' ? '5rem' : '4rem'} + env(safe-area-inset-top))` }}
+        className="h-screen pt-20 pb-16"
+        style={{ paddingTop: `calc(5rem + env(safe-area-inset-top))` }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -528,9 +603,37 @@ export default function EnhancedMobileHome() {
                       setViewMode('all');
                       setCurrentIndex(0);
                     }}
-                    className="bg-blue-600 text-white px-6 py-2 rounded-full hover:bg-blue-700 transition"
+                    className="bg-blue-600 text-white px-6 py-3 rounded-full hover:bg-blue-700 transition text-sm font-medium"
                   >
                     Browse Articles
+                  </button>
+                </>
+              ) : userPreferences.filterMode === 'selected' && userPreferences.selectedCategories.length === 0 ? (
+                <>
+                  <div className="text-6xl mb-4">🔧</div>
+                  <p className="text-xl text-gray-400 mb-2">No categories selected</p>
+                  <p className="text-sm text-gray-500 mb-6">
+                    Select categories from the menu to see articles
+                  </p>
+                  <button
+                    onClick={() => setShowMenu(true)}
+                    className="bg-purple-600 text-white px-6 py-3 rounded-full hover:bg-purple-700 transition text-sm font-medium"
+                  >
+                    Select Categories
+                  </button>
+                </>
+              ) : userPreferences.filterMode === 'selected' ? (
+                <>
+                  <div className="text-6xl mb-4">📝</div>
+                  <p className="text-xl text-gray-400 mb-2">No articles in selected categories</p>
+                  <p className="text-sm text-gray-500 mb-6">
+                    Try selecting more categories or switch to all articles
+                  </p>
+                  <button
+                    onClick={toggleFilterMode}
+                    className="bg-blue-600 text-white px-6 py-3 rounded-full hover:bg-blue-700 transition text-sm font-medium"
+                  >
+                    Show All Articles
                   </button>
                 </>
               ) : (
@@ -559,7 +662,7 @@ export default function EnhancedMobileHome() {
                 opacity: 0 
               }}
               transition={{ type: 'tween', duration: 0.3 }}
-              className="h-full px-4 overflow-y-auto pb-4"
+              className="h-full px-3 overflow-y-auto pb-4"
             >
               <ArticleCard
                 article={currentArticle}
@@ -571,7 +674,6 @@ export default function EnhancedMobileHome() {
                 formatTimeAgo={formatTimeAgo}
                 index={currentIndex}
                 total={filteredArticles.length}
-                isAuthenticated={!!user}
               />
             </motion.div>
           </AnimatePresence>
@@ -579,43 +681,42 @@ export default function EnhancedMobileHome() {
       </div>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md border-t border-gray-800 px-4 py-3 z-40"
+      <div className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md border-t border-gray-800 px-3 py-2 z-40"
            style={{ 
              paddingBottom: 'env(safe-area-inset-bottom)', 
              paddingLeft: 'env(safe-area-inset-left)', 
              paddingRight: 'env(safe-area-inset-right)' 
            }}>
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-400">
+          <span className="text-xs text-gray-400">
             {currentIndex + 1} of {filteredArticles.length}
           </span>
           
-          {/* Progress dots */}
           <div className="flex space-x-1">
-            {Array.from({ length: Math.min(filteredArticles.length, 10) }).map((_, i) => (
+            {Array.from({ length: Math.min(filteredArticles.length, 8) }).map((_, i) => (
               <div
                 key={i}
-                className={`h-1.5 w-1.5 rounded-full transition-all ${
-                  i === currentIndex % 10 
-                    ? 'bg-blue-500 w-6' 
+                className={`h-1 w-1 rounded-full transition-all ${
+                  i === currentIndex % 8 
+                    ? 'bg-blue-500 w-4' 
                     : 'bg-gray-700'
                 }`}
               />
             ))}
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3">
             <button
               onClick={() => navigateArticle(-1)}
               disabled={currentIndex === 0}
-              className="text-gray-400 disabled:opacity-30"
+              className="text-gray-400 disabled:opacity-30 p-2 text-lg"
             >
               ←
             </button>
             <button
               onClick={() => navigateArticle(1)}
               disabled={currentIndex === filteredArticles.length - 1}
-              className="text-gray-400 disabled:opacity-30"
+              className="text-gray-400 disabled:opacity-30 p-2 text-lg"
             >
               →
             </button>
@@ -623,7 +724,7 @@ export default function EnhancedMobileHome() {
         </div>
       </div>
 
-      {/* Menu */}
+      {/* Enhanced Menu */}
       <AnimatePresence>
         {showMenu && (
           <>
@@ -639,103 +740,214 @@ export default function EnhancedMobileHome() {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'tween' }}
-              className="fixed left-0 top-0 bottom-0 w-72 bg-gray-900 z-50 p-6"
+              className="fixed left-0 top-0 bottom-0 w-80 bg-gray-900 z-50 overflow-y-auto"
               style={{ 
-                paddingTop: `calc(1.5rem + env(safe-area-inset-top))`, 
-                paddingLeft: `calc(1.5rem + env(safe-area-inset-left))`,
-                paddingBottom: `calc(1.5rem + env(safe-area-inset-bottom))`
+                paddingTop: `calc(1rem + env(safe-area-inset-top))`, 
+                paddingLeft: `calc(1rem + env(safe-area-inset-left))`,
+                paddingBottom: `calc(1rem + env(safe-area-inset-bottom))`
               }}
             >
-              <div className="flex items-center justify-between mb-8">
-                <h2 className="text-xl font-bold">Menu</h2>
-                <button
-                  onClick={() => setShowMenu(false)}
-                  className="text-gray-400 text-2xl"
-                >
-                  ×
-                </button>
-              </div>
-              
-              <div className="space-y-3">
-                <button 
-                  onClick={() => {
-                    setViewMode('all');
-                    setCurrentIndex(0);
-                    setShowMenu(false);
-                  }}
-                  className={`flex items-center justify-between w-full py-3 px-4 rounded-lg hover:bg-gray-700 transition ${
-                    viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'
-                  }`}
-                >
-                  <span>📰 All Articles</span>
-                  <span className="text-gray-400">{articles.length}</span>
-                </button>
-                
-                <button 
-                  onClick={() => {
-                    if (!user) {
-                      setShowAuthModal(true);
-                      setShowMenu(false);
-                      return;
-                    }
-                    setViewMode('bookmarks');
-                    setCurrentIndex(0);
-                    setShowMenu(false);
-                  }}
-                  className={`flex items-center justify-between w-full py-3 px-4 rounded-lg hover:bg-gray-700 transition ${
-                    viewMode === 'bookmarks' ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-300'
-                  }`}
-                >
-                  <span>🔖 Bookmarks</span>
-                  <span className="text-gray-400">
-                    {user ? userStats.bookmarkedArticles.size : '•'}
-                  </span>
-                </button>
-              </div>
-
-              {!user && (
-                <div className="mt-8 p-4 bg-gray-800 rounded-lg">
-                  <p className="text-gray-300 text-sm mb-3">
-                    Sign in to sync your bookmarks and reading progress across devices
-                  </p>
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-bold">Menu</h2>
                   <button
-                    onClick={() => {
-                      setShowAuthModal(true);
-                      setShowMenu(false);
-                    }}
-                    className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+                    onClick={() => setShowMenu(false)}
+                    className="text-gray-400 text-2xl p-1"
                   >
-                    Sign In / Sign Up
+                    ×
                   </button>
                 </div>
-              )}
+                
+                {/* User Profile Section */}
+                <div className="mb-6 p-3 bg-gradient-to-br from-blue-600/20 to-purple-600/20 rounded-xl border border-blue-500/30">
+                  <div className="flex items-center space-x-3 mb-3">
+                    <div className="w-12 h-12 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                      {user?.user_metadata?.full_name?.[0] || user?.email?.[0] || 'U'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold text-sm truncate">
+                        {user?.user_metadata?.full_name || 'AI Enthusiast'}
+                      </p>
+                      <p className="text-gray-300 text-xs truncate">{user?.email}</p>
+                      <p className="text-gray-400 text-xs">Member since {joinDate}</p>
+                    </div>
+                  </div>
+                  
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                      <p className="text-blue-400 font-bold text-sm">{userStats.readArticles.size}</p>
+                      <p className="text-gray-400 text-xs">Articles Read</p>
+                    </div>
+                    <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                      <p className="text-yellow-400 font-bold text-sm">{userStats.bookmarkedArticles.size}</p>
+                      <p className="text-gray-400 text-xs">Bookmarked</p>
+                    </div>
+                    <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                      <p className="text-green-400 font-bold text-sm">{userStats.streak}</p>
+                      <p className="text-gray-400 text-xs">Day Streak</p>
+                    </div>
+                    <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                      <p className="text-purple-400 font-bold text-sm">{userStats.readingTime}m</p>
+                      <p className="text-gray-400 text-xs">Reading Time</p>
+                    </div>
+                  </div>
+
+                  {/* Progress */}
+                  <div className="bg-gray-800/30 rounded-lg p-2">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs text-gray-300">Today's Progress</span>
+                      <span className="text-xs text-blue-400">{userStats.articlesReadToday}/5</span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-1.5">
+                      <div 
+                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min((userStats.articlesReadToday / 5) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* View Mode Section */}
+                <div className="space-y-2 mb-4">
+                  <h3 className="text-sm font-semibold text-white mb-2">View Options</h3>
+                  <button 
+                    onClick={() => {
+                      setViewMode('all');
+                      setUserPreferences(prev => ({
+                         ...prev,
+                         filterMode: 'all' as const
+                      }));
+                      setCurrentIndex(0);
+                      setShowMenu(false);
+                    }}
+                    className={`flex items-center justify-between w-full py-2 px-3 rounded-lg hover:bg-gray-700 transition text-sm ${
+                      viewMode === 'all' && userPreferences.filterMode === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300'
+                    }`}
+                  >
+                    <span>📰 All Articles</span>
+                    <span className="text-gray-400 text-xs">{articles.length}</span>
+                  </button>
+                  
+                  <button 
+                    onClick={() => {
+                      setViewMode('bookmarks');
+                      setCurrentIndex(0);
+                      setShowMenu(false);
+                    }}
+                    className={`flex items-center justify-between w-full py-2 px-3 rounded-lg hover:bg-gray-700 transition text-sm ${
+                      viewMode === 'bookmarks' ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-300'
+                    }`}
+                  >
+                    <span>🔖 Bookmarks</span>
+                    <span className="text-gray-400 text-xs">{userStats.bookmarkedArticles.size}</span>
+                  </button>
+                </div>
+
+                {/* Category Filter Section */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-white">Category Filters</h3>
+                    <button
+                      onClick={() => setShowCategorySettings(!showCategorySettings)}
+                      className="text-blue-400 text-xs hover:text-blue-300"
+                    >
+                      {showCategorySettings ? 'Hide' : 'Customize'}
+                    </button>
+                  </div>
+
+                  {/* Filter Mode Toggle */}
+                  <div className="flex items-center justify-between p-2 bg-gray-800 rounded-lg">
+                    <span className="text-gray-300 text-sm">Category Filtering</span>
+                    <button
+                      onClick={toggleFilterMode}
+                      className={`px-2 py-1 rounded-full text-xs font-medium transition ${
+                        userPreferences.filterMode === 'selected'
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-700 text-gray-300'
+                      }`}
+                    >
+                      {userPreferences.filterMode === 'selected' ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+
+                  {/* Category Selection */}
+                  <AnimatePresence>
+                    {showCategorySettings && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="bg-gray-800 rounded-lg p-3 space-y-2">
+                          {/* Select All/None buttons */}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={selectAllCategories}
+                              className="flex-1 bg-green-600 text-white py-1 px-2 rounded-lg text-xs hover:bg-green-700 transition"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              onClick={deselectAllCategories}
+                              className="flex-1 bg-red-600 text-white py-1 px-2 rounded-lg text-xs hover:bg-red-700 transition"
+                            >
+                              Clear All
+                            </button>
+                          </div>
+
+                          {/* Category checkboxes */}
+                          <div className="max-h-48 overflow-y-auto space-y-1">
+                            {AVAILABLE_CATEGORIES.map(category => (
+                              <label
+                                key={category}
+                                className="flex items-center space-x-2 p-1 hover:bg-gray-700 rounded cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={userPreferences.selectedCategories.includes(category)}
+                                  onChange={() => toggleCategorySelection(category)}
+                                  className="w-3 h-3 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                                />
+                                <span className="text-gray-300 text-xs flex-1">{category}</span>
+                                <span className="text-gray-500 text-xs">
+                                  {articles.filter(a => a.category === category).length}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Selected Categories Summary */}
+                  {userPreferences.filterMode === 'selected' && (
+                    <div className="bg-purple-900/30 border border-purple-500/30 rounded-lg p-2">
+                      <p className="text-purple-300 text-xs mb-1">
+                        Showing {userPreferences.selectedCategories.length} categories:
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {userPreferences.selectedCategories.slice(0, 4).map(category => (
+                          <span key={category} className="bg-purple-600 text-white text-xs px-1 py-0.5 rounded-full">
+                            {category}
+                          </span>
+                        ))}
+                        {userPreferences.selectedCategories.length > 4 && (
+                          <span className="bg-gray-600 text-white text-xs px-1 py-0.5 rounded-full">
+                            +{userPreferences.selectedCategories.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
-
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => setShowAuthModal(false)}
-      />
-
-      <style jsx global>{`
-        .scrollbar-hide {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        .scrollbar-hide::-webkit-scrollbar {
-          display: none;
-        }
-        
-        /* iOS PWA specific styles */
-        @supports (padding: max(0px)) {
-          .ios-safe-area-top {
-            padding-top: max(1rem, env(safe-area-inset-top));
-          }
-        }
-      `}</style>
     </div>
   );
 }
@@ -750,8 +962,7 @@ function ArticleCard({
   onOpen,
   formatTimeAgo,
   index,
-  total,
-  isAuthenticated
+  total
 }: {
   article: Article;
   isRead: boolean;
@@ -762,15 +973,13 @@ function ArticleCard({
   formatTimeAgo: (date: string) => string;
   index: number;
   total: number;
-  isAuthenticated: boolean;
 }) {
   return (
     <div 
-      className="bg-gray-900 rounded-2xl p-6 min-h-[calc(100vh-240px)] flex flex-col cursor-pointer"
+      className="bg-gray-900 rounded-2xl p-4 min-h-[calc(100vh-200px)] flex flex-col cursor-pointer"
       onClick={onOpen}
     >
-      {/* Source and Time */}
-      <div className="flex items-center justify-between mb-4 text-sm">
+      <div className="flex items-center justify-between mb-3 text-xs">
         <div className="flex items-center space-x-2">
           <span className="text-blue-400 font-medium">{article.source}</span>
           <span className="text-gray-500">•</span>
@@ -781,9 +990,8 @@ function ArticleCard({
         </span>
       </div>
 
-      {/* Image */}
       {article.image_url && (
-        <div className="mb-4 rounded-xl overflow-hidden bg-gray-800 h-48 relative">
+        <div className="mb-3 rounded-xl overflow-hidden bg-gray-800 h-40 relative">
           <img
             src={article.image_url}
             alt={article.title}
@@ -800,37 +1008,32 @@ function ArticleCard({
         </div>
       )}
 
-      {/* Title */}
-      <h2 className="text-2xl font-bold mb-4 leading-tight">
+      <h2 className="text-xl font-bold mb-3 leading-tight">
         {article.title}
       </h2>
 
-      {/* Summary */}
-      <p className="text-gray-300 text-lg leading-relaxed mb-6 flex-grow">
+      <p className="text-gray-300 text-base leading-relaxed mb-4 flex-grow">
         {article.summary}
       </p>
 
-      {/* Stats */}
-      <div className="flex items-center justify-center mb-6 text-sm text-gray-500">
+      <div className="flex items-center justify-center mb-4 text-sm text-gray-500">
         <span>📖 2 min read</span>
       </div>
 
-      {/* Actions */}
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={(e) => {
             e.stopPropagation();
             onBookmark();
           }}
-          className={`py-3 px-4 rounded-xl font-medium transition flex items-center justify-center gap-2 ${
+          className={`py-3 px-4 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm ${
             isBookmarked
               ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-white shadow-lg'
-              : 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:from-yellow-600 hover:to-amber-600 hover:text-white'
-          } ${!isAuthenticated ? 'opacity-75' : ''}`}
-          title={!isAuthenticated ? 'Sign in to bookmark articles' : ''}
+              : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+          }`}
         >
-          <span className="text-lg">{isBookmarked ? '⭐' : '🤍'}</span>
-          <span className="text-sm">{isBookmarked ? 'Saved' : 'Save'}</span>
+          <span className="text-base">{isBookmarked ? '⭐' : '🤍'}</span>
+          <span>{isBookmarked ? 'Saved' : 'Save'}</span>
         </button>
         
         <button
@@ -838,10 +1041,10 @@ function ArticleCard({
             e.stopPropagation();
             onShare();
           }}
-          className="bg-gray-800 text-gray-300 py-3 px-4 rounded-xl font-medium hover:bg-gray-700 hover:bg-gradient-to-r hover:from-blue-600 hover:to-purple-600 hover:text-white transition flex items-center justify-center gap-2"
+          className="bg-gray-800 text-gray-300 py-3 px-4 rounded-xl font-medium hover:bg-gray-700 transition flex items-center justify-center gap-2 text-sm"
         >
-          <span className="text-lg">📤</span>
-          <span className="text-sm">Share</span>
+          <span className="text-base">📤</span>
+          <span>Share</span>
         </button>
       </div>
     </div>
