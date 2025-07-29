@@ -7,6 +7,61 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import UserMenu from '@/components/auth/UserMenu';
 
+// Add this right after your imports in page.tsx, before the Supabase initialization
+
+// Debug all environment variables
+console.log('🔍 ALL ENVIRONMENT VARIABLES:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('All process.env keys:', Object.keys(process.env));
+
+// Debug Supabase specific variables
+console.log('🔑 SUPABASE ENVIRONMENT VARIABLES:');
+console.log('NEXT_PUBLIC_SUPABASE_URL:', process.env.NEXT_PUBLIC_SUPABASE_URL);
+console.log('NEXT_PUBLIC_SUPABASE_ANON_KEY:', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+console.log('URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL);
+console.log('Key exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+console.log('URL length:', process.env.NEXT_PUBLIC_SUPABASE_URL?.length || 0);
+console.log('Key length:', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.length || 0);
+
+// Also check if there are any variations in naming
+console.log('🔍 CHECKING ALTERNATIVE NAMING:');
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL);
+console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY);
+console.log('NEXT_PUBLIC_SUPABASE_PROJECT_URL:', process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL);
+
+// Replace your existing Supabase initialization with this enhanced version:
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+console.log('🔧 SUPABASE INITIALIZATION:');
+console.log('Final URL:', supabaseUrl);
+console.log('Final Key (first 20 chars):', supabaseAnonKey.substring(0, 20) + '...');
+console.log('Both values present:', !!(supabaseUrl && supabaseAnonKey));
+console.log('Window exists:', typeof window !== 'undefined');
+
+// Create Supabase client with detailed logging
+const supabase = typeof window !== 'undefined' && supabaseUrl && supabaseAnonKey 
+  ? (() => {
+      console.log('✅ Creating Supabase client...');
+      try {
+        const client = createClient(supabaseUrl, supabaseAnonKey);
+        console.log('✅ Supabase client created successfully!');
+        return client;
+      } catch (error) {
+        console.error('❌ Error creating Supabase client:', error);
+        return null;
+      }
+    })()
+  : (() => {
+      console.log('❌ Cannot create Supabase client');
+      console.log('Window undefined:', typeof window === 'undefined');
+      console.log('URL missing:', !supabaseUrl);
+      console.log('Key missing:', !supabaseAnonKey);
+      return null;
+    })();
+
+console.log('🏁 FINAL RESULT: Supabase client exists:', !!supabase);
+
 interface Article {
   id: string;
   title: string;
