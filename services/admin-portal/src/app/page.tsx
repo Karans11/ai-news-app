@@ -1849,15 +1849,35 @@ export default function AdminDashboard() {
     return () => clearInterval(timeInterval);
   }, [user]);
 
-  const checkSession = async () => {
-    if (!supabase) {
-      setLoading(false);
+  // REPLACE your existing checkSession function with this improved version
+
+const checkSession = async () => {
+  console.log('🔍 Starting session check...');
+  
+  if (!supabase) {
+    console.log('❌ Supabase not available');
+    setLoading(false);
+    return;
+  }
+
+  try {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    console.log('Session check result:', { 
+      hasSession: !!session, 
+      hasUser: !!session?.user,
+      email: session?.user?.email,
+      error 
+    });
+    
+    if (error) {
+      console.error('❌ Session error:', error);
       return;
     }
-
-    const { data: { session } } = await supabase.auth.getSession();
     
     if (session?.user) {
+      console.log('👤 User found, checking admin role...');
+      
       // Verify admin role in user_profiles table
       const { data: userData, error: userError } = await supabase
         .from('user_profiles')
@@ -1865,14 +1885,29 @@ export default function AdminDashboard() {
         .eq('email', session.user.email)
         .single();
 
+      console.log('Role check result:', { userData, userError });
+
       if (userData?.role === 'admin') {
+        console.log('✅ Admin role confirmed');
         setUser(session.user);
       } else {
+        console.log('❌ Not admin or role check failed');
         await supabase.auth.signOut();
+        setUser(null);
       }
+    } else {
+      console.log('❌ No session found');
+      setUser(null);
     }
+  } catch (error) {
+    console.error('❌ Session check error:', error);
+    setUser(null);
+  } finally {
+    // CRITICAL: Always set loading to false
+    console.log('✅ Session check complete, setting loading to false');
     setLoading(false);
-  };
+  }
+};
 
   const fetchStats = async () => {
     try {

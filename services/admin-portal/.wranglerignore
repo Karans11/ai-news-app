@@ -1,0 +1,19 @@
+# Exclude everything except the out folder
+*
+!out/
+!out/**
+
+# Explicitly exclude problematic files and folders
+node_modules/
+.next/
+cache/
+.cache/
+*.log
+.DS_Store
+.env*
+.git/
+
+# Exclude large cache files specifically
+**/*.pack
+**/cache/**
+**/.cache/**
