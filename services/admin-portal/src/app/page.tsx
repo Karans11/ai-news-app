@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import WeeklyArticlesManager from '@/components/WeeklyArticlesManager';
 
 // Initialize Supabase client (only on client-side)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -136,7 +137,7 @@ function LoginForm({ onLogin }: { onLogin: (user: any) => void }) {
       <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
         <div className="text-center mb-8">
           <div className="text-4xl mb-4">🤖</div>
-          <h1 className="text-2xl font-bold text-gray-900">AI News Admin Portal</h1>
+          <h1 className="text-2xl font-bold text-gray-900">NineT Admin Portal</h1>
           <p className="text-gray-600 mt-2">Sign in with your admin credentials</p>
         </div>
 
@@ -180,13 +181,13 @@ function LoginForm({ onLogin }: { onLogin: (user: any) => void }) {
             disabled={loading}
             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? '🔐 Signing In...' : '🔓 Sign In'}
+            {loading ? '🔓 Signing In...' : '🔐 Sign In'}
           </button>
         </form>
 
         <div className="mt-6 text-center">
           <p className="text-xs text-gray-500">
-            🔒 Secure access to AI News management system
+            🔒 Secure access to NineT management system
           </p>
         </div>
       </div>
@@ -197,7 +198,7 @@ function LoginForm({ onLogin }: { onLogin: (user: any) => void }) {
 // Interface definitions
 interface Stats {
   totalArticles: number;
-  totalSubscribers: number;
+  totalUsers: number;
   totalViews: number;
   pendingApproval: number;
   lastUpdated: string;
@@ -237,11 +238,14 @@ interface Article {
   image_url?: string;
 }
 
-interface Subscriber {
+interface User {
   id: string;
   email: string;
+  role: string;
   is_active: boolean;
-  subscribed_at: string;
+  created_at: string;
+  last_login?: string;
+  full_name?: string;
 }
 
 // Edit Article Modal Component with Custom Categories
@@ -556,14 +560,15 @@ function ScheduleDialog({
       return;
     }
     
-    // Create the scheduled time properly in IST
-    const istDateTime = `${selectedDate}T${selectedTime}:00`;
+    // ✅ CORRECTED: Properly convert IST to UTC
+    const istDateTimeString = `${selectedDate}T${selectedTime}:00`;
     
-    // Convert IST to UTC for storage
-    // IST is UTC+5:30, so we subtract 5.5 hours to get UTC
-    const istDate = new Date(istDateTime);
-    const utcDateTime = new Date(istDate.getTime() - (5.5 * 60 * 60 * 1000));
-    const scheduledDateTime = utcDateTime.toISOString();
+    // Create date explicitly in IST timezone (+05:30)
+    const istDate = new Date(istDateTimeString + '+05:30');
+    const scheduledDateTime = istDate.toISOString(); // This is now correct UTC
+    
+    console.log('Scheduling for IST:', istDateTimeString);
+    console.log('Converted to UTC:', scheduledDateTime);
     
     onConfirm(scheduledDateTime);
   };
@@ -623,7 +628,229 @@ function ScheduleDialog({
   );
 }
 
-// Approval Dashboard Component
+// Edit Pending Article Modal Component
+function EditPendingArticleModal({ 
+  isOpen, 
+  onClose, 
+  article, 
+  onSave 
+}: { 
+  isOpen: boolean;
+  onClose: () => void;
+  article: PendingArticle | null;
+  onSave: () => void;
+}) {
+  const [formData, setFormData] = useState({
+    title: '',
+    summary: '',
+    original_url: '',
+    category: '',
+    source: '',
+    image_url: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [showCustomCategory, setShowCustomCategory] = useState(false);
+  const [customCategory, setCustomCategory] = useState('');
+
+  const defaultCategories = [
+    'AI Models', 'Machine Learning', 'Policy', 'Research', 
+    'Industry News', 'Startups', 'AI Security', 'AI Tools',
+    'Computer Vision', 'Natural Language Processing', 'Robotics'
+  ];
+
+  useEffect(() => {
+    if (article) {
+      setFormData({
+        title: article.title || '',
+        summary: article.summary || '',
+        original_url: article.original_url || '',
+        category: article.category || '',
+        source: article.source || '',
+        image_url: article.image_url || ''
+      });
+      
+      // Check if category is custom (not in default list)
+      if (article.category && !defaultCategories.includes(article.category)) {
+        setShowCustomCategory(true);
+        setCustomCategory(article.category);
+        setFormData(prev => ({ ...prev, category: 'custom' }));
+      }
+    }
+  }, [article]);
+
+  const handleCategoryChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomCategory(true);
+      setFormData({ ...formData, category: value });
+    } else if (value === 'add-new') {
+      setShowCustomCategory(true);
+      setCustomCategory('');
+      setFormData({ ...formData, category: 'custom' });
+    } else {
+      setShowCustomCategory(false);
+      setCustomCategory('');
+      setFormData({ ...formData, category: value });
+    }
+  };
+
+  const handleSave = async () => {
+    if (!article) return;
+    
+    const finalCategory = formData.category === 'custom' ? customCategory : formData.category;
+    
+    if (!finalCategory) {
+      alert('Please select or enter a category');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const response = await fetch(
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles/${article.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': 'Bearer demo-admin-token',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            ...formData,
+            category: finalCategory
+          })
+        }
+      );
+
+      if (response.ok) {
+        alert('Pending article updated successfully!');
+        onSave();
+        onClose();
+      } else {
+        alert('Error updating pending article');
+      }
+    } catch (error) {
+      console.error('Error updating pending article:', error);
+      alert('Error updating pending article');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen || !article) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-bold">Edit Pending Article</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-2xl"
+          >
+            ×
+          </button>
+        </div>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Summary</label>
+            <textarea
+              value={formData.summary}
+              onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Original URL</label>
+              <input
+                type="url"
+                value={formData.original_url}
+                onChange={(e) => setFormData({ ...formData, original_url: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <select
+                value={formData.category}
+                onChange={(e) => handleCategoryChange(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select Category</option>
+                {defaultCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+                <option value="add-new">➕ Create New Category</option>
+              </select>
+              
+              {showCustomCategory && (
+                <input
+                  type="text"
+                  value={customCategory}
+                  onChange={(e) => setCustomCategory(e.target.value)}
+                  placeholder="Enter custom category name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mt-2"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+              <input
+                type="text"
+                value={formData.source}
+                onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., TechCrunch, OpenAI Blog"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Image URL (optional)</label>
+              <input
+                type="url"
+                value={formData.image_url}
+                onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {loading ? '⏳ Saving...' : '💾 Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Approval Dashboard Component with Edit Functionality
 function ApprovalDashboard() {
   const [pendingArticles, setPendingArticles] = useState<PendingArticle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -636,6 +863,13 @@ function ApprovalDashboard() {
     isOpen: false,
     articleId: '',
     articleTitle: ''
+  });
+  const [editModal, setEditModal] = useState<{
+    isOpen: boolean;
+    article: PendingArticle | null;
+  }>({
+    isOpen: false,
+    article: null
   });
 
   useEffect(() => {
@@ -662,6 +896,13 @@ function ApprovalDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleEdit = (article: PendingArticle) => {
+    setEditModal({
+      isOpen: true,
+      article: article
+    });
   };
 
   const handleApprove = async (articleId: string, autoPublish: boolean = false) => {
@@ -732,11 +973,10 @@ function ApprovalDashboard() {
       const responseData = await response.json();
 
       if (response.ok && responseData.success) {
-        // Convert UTC back to IST for display
+        // ✅ CORRECTED: No double conversion
         const utcDate = new Date(scheduledDateTime);
-        const istDate = new Date(utcDate.getTime() + (5.5 * 60 * 60 * 1000));
-        const istDisplayTime = istDate.toLocaleString('en-IN', {
-          timeZone: 'Asia/Kolkata',
+        const istDisplayTime = utcDate.toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata', // Single, proper conversion
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
@@ -819,7 +1059,7 @@ function ApprovalDashboard() {
 
         {pendingArticles.length === 0 ? (
           <div className="text-center py-12">
-            <div className="text-gray-400 text-6xl mb-4">📝</div>
+            <div className="text-gray-400 text-6xl mb-4">📋</div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">No articles pending approval</h3>
             <p className="text-gray-500">New AI-generated articles will appear here for review.</p>
           </div>
@@ -862,10 +1102,16 @@ function ApprovalDashboard() {
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center"
                   >
-                    📖 View Original →
+                    📖 View Original ↗
                   </a>
                   
                   <div className="flex gap-3">
+                    <button
+                      onClick={() => handleEdit(article)}
+                      className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
+                    >
+                      ✏️ Edit
+                    </button>
                     <button
                       onClick={() => handleReject(article.id)}
                       disabled={processingId === article.id}
@@ -901,14 +1147,31 @@ function ApprovalDashboard() {
         onConfirm={handleScheduleConfirm}
         articleTitle={scheduleDialog.articleTitle}
       />
+
+      <EditPendingArticleModal
+        isOpen={editModal.isOpen}
+        onClose={() => setEditModal({ isOpen: false, article: null })}
+        article={editModal.article}
+        onSave={fetchPendingArticles}
+      />
     </>
   );
 }
 
-// Enhanced Articles List Component with Schedule Management
+// Enhanced Articles List Component with Pagination and Filters
 function ArticlesList() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    status: '',
+    category: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  const [categories, setCategories] = useState<string[]>([]);
   const [editModal, setEditModal] = useState<{
     isOpen: boolean;
     article: Article | null;
@@ -924,14 +1187,47 @@ function ArticlesList() {
     article: null
   });
 
+  const articlesPerPage = 50;
+
   useEffect(() => {
     fetchArticles();
-  }, []);
+    fetchCategories();
+  }, [currentPage, searchTerm, filters]);
+
+  const fetchCategories = async () => {
+    try {
+      const response = await fetch(
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/categories',
+        {
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      if (data.success) {
+        setCategories(data.data.map((cat: any) => cat.name));
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    }
+  };
 
   const fetchArticles = async () => {
     try {
+      const queryParams = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: articlesPerPage.toString(),
+        search: searchTerm,
+        status: filters.status,
+        category: filters.category,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo
+      });
+
       const response = await fetch(
-        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles',
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/articles?${queryParams}`,
         {
           headers: {
             'Authorization': 'Bearer demo-admin-token'
@@ -942,6 +1238,7 @@ function ArticlesList() {
       const data = await response.json();
       if (data.success) {
         setArticles(data.data);
+        setTotalPages(Math.ceil(data.total / articlesPerPage));
       }
     } catch (error) {
       console.error('Error fetching articles:', error);
@@ -1027,11 +1324,11 @@ function ArticlesList() {
   const formatScheduledTime = (scheduledTime: string) => {
     if (!scheduledTime) return null;
     
+    // ✅ CORRECTED: Let JavaScript handle timezone conversion properly
     const utcDate = new Date(scheduledTime);
-    const istDate = new Date(utcDate.getTime() + (5.5 * 60 * 60 * 1000));
     
-    return istDate.toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata',
+    return utcDate.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata', // This automatically converts UTC to IST
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -1053,9 +1350,27 @@ function ArticlesList() {
       };
     } else if (article.approval_status === 'pending') {
       return { text: 'Pending', color: 'bg-yellow-100 text-yellow-800' };
+    } else if (article.approval_status === 'rejected') {
+      return { text: 'Rejected', color: 'bg-red-100 text-red-800' };
     } else {
       return { text: 'Draft', color: 'bg-gray-100 text-gray-800' };
     }
+  };
+
+  const handleFilterChange = (key: string, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+    setCurrentPage(1); // Reset to first page when filtering
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      status: '',
+      category: '',
+      dateFrom: '',
+      dateTo: ''
+    });
+    setSearchTerm('');
+    setCurrentPage(1);
   };
 
   if (loading) {
@@ -1074,103 +1389,228 @@ function ArticlesList() {
             ↻ Refresh
           </button>
         </div>
+
+        {/* Search and Filters */}
+        <div className="mb-6 space-y-4">
+          {/* Search Bar */}
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <input
+                type="text"
+                placeholder="Search articles by title, source, or content..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={clearFilters}
+              className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+            >
+              🗑️ Clear Filters
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                value={filters.status}
+                onChange={(e) => handleFilterChange('status', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Statuses</option>
+                <option value="published">Published</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="pending">Pending</option>
+                <option value="rejected">Rejected</option>
+                <option value="draft">Draft</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <select
+                value={filters.category}
+                onChange={(e) => handleFilterChange('category', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Categories</option>
+                {categories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+              <input
+                type="date"
+                value={filters.dateFrom}
+                onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+              <input
+                type="date"
+                value={filters.dateTo}
+                onChange={(e) => handleFilterChange('dateTo', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+        </div>
         
         {articles.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-gray-400 text-6xl mb-4">📄</div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">No articles found</h3>
-            <p className="text-gray-500">Articles will appear here once created.</p>
+            <p className="text-gray-500">
+              {searchTerm || Object.values(filters).some(f => f) 
+                ? 'Try adjusting your search or filters.' 
+                : 'Articles will appear here once created.'}
+            </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Views</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {articles.map((article) => {
-                  const statusInfo = getStatusInfo(article);
-                  return (
-                    <tr key={article.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900 max-w-xs truncate">
-                              {article.title}
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Views</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {articles.map((article) => {
+                    const statusInfo = getStatusInfo(article);
+                    return (
+                      <tr key={article.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900 max-w-xs truncate">
+                                {article.title}
+                              </div>
+                              <div className="text-sm text-gray-500">{article.source}</div>
                             </div>
-                            <div className="text-sm text-gray-500">{article.source}</div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
-                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${statusInfo.color}`}>
-                            {statusInfo.text}
-                          </span>
-                          {statusInfo.subtitle && (
-                            <div className="text-xs text-gray-500 mt-1">
-                              {statusInfo.subtitle}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {article.category}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {article.view_count || 0}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(article.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex justify-end gap-2 flex-wrap">
-                          {/* Manual Publish button for scheduled articles */}
-                          {!article.is_published && article.scheduled_publish_at && (
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${statusInfo.color}`}>
+                              {statusInfo.text}
+                            </span>
+                            {statusInfo.subtitle && (
+                              <div className="text-xs text-gray-500 mt-1">
+                                {statusInfo.subtitle}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {article.category}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {article.view_count || 0}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {new Date(article.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex justify-end gap-2 flex-wrap">
+                            {/* Manual Publish button for scheduled articles */}
+                            {!article.is_published && article.scheduled_publish_at && (
+                              <button
+                                onClick={() => handleManualPublish(article)}
+                                className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition-colors text-xs"
+                                title="Publish immediately (override schedule)"
+                              >
+                                🚀 Publish Now
+                              </button>
+                            )}
+                            
                             <button
-                              onClick={() => handleManualPublish(article)}
-                              className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 transition-colors text-xs"
-                              title="Publish immediately (override schedule)"
+                              onClick={() => handleEdit(article)}
+                              className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors"
                             >
-                              🚀 Publish Now
+                              ✏️ Edit
                             </button>
-                          )}
-                          
-                          <button
-                            onClick={() => handleEdit(article)}
-                            className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors"
-                          >
-                            ✏️ Edit
-                          </button>
-                          <button
-                            onClick={() => handleDelete(article)}
-                            className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition-colors"
-                          >
-                            🗑️ Delete
-                          </button>
-                          <a
-                            href={article.original_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors"
-                          >
-                            👁️ View
-                          </a>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                            <button
+                              onClick={() => handleDelete(article)}
+                              className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition-colors"
+                            >
+                              🗑️ Delete
+                            </button>
+                            <a
+                              href={article.original_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              👁️ View
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="mt-6 flex items-center justify-between">
+                <div className="text-sm text-gray-700">
+                  Showing page {currentPage} of {totalPages} ({articles.length} articles)
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    ← Previous
+                  </button>
+                  
+                  {/* Page numbers */}
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageNum = Math.max(1, Math.min(currentPage - 2 + i, totalPages - 4 + i));
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`px-3 py-2 rounded ${
+                          pageNum === currentPage
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                  
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1191,19 +1631,19 @@ function ArticlesList() {
   );
 }
 
-// Subscribers List Component
-function SubscribersList() {
-  const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
+// Users List Component (Replacing Subscribers)
+function UsersList() {
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchSubscribers();
+    fetchUsers();
   }, []);
 
-  const fetchSubscribers = async () => {
+  const fetchUsers = async () => {
     try {
       const response = await fetch(
-        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/subscribers',
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/users',
         {
           headers: {
             'Authorization': 'Bearer demo-admin-token'
@@ -1213,56 +1653,128 @@ function SubscribersList() {
       
       const data = await response.json();
       if (data.success) {
-        setSubscribers(data.data);
+        setUsers(data.data);
       }
     } catch (error) {
-      console.error('Error fetching subscribers:', error);
+      console.error('Error fetching users:', error);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleToggleUserStatus = async (userId: string, currentStatus: boolean) => {
+    try {
+      const response = await fetch(
+        `https://ai-news-api.skaybotlabs.workers.dev/api/admin/users/${userId}/toggle-status`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': 'Bearer demo-admin-token',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            is_active: !currentStatus
+          })
+        }
+      );
+
+      if (response.ok) {
+        alert(`User ${!currentStatus ? 'activated' : 'deactivated'} successfully!`);
+        await fetchUsers();
+      } else {
+        alert('Error updating user status');
+      }
+    } catch (error) {
+      console.error('Error updating user status:', error);
+      alert('Error updating user status');
+    }
+  };
+
   if (loading) {
-    return <div className="text-center py-8">Loading subscribers...</div>;
+    return <div className="text-center py-8">Loading users...</div>;
   }
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-2xl font-bold mb-6">Subscribers</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold">Users Management</h2>
+        <button
+          onClick={fetchUsers}
+          className="px-3 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 transition-colors"
+        >
+          ↻ Refresh
+        </button>
+      </div>
       
-      {subscribers.length === 0 ? (
+      {users.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-gray-400 text-6xl mb-4">👥</div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No subscribers yet</h3>
-          <p className="text-gray-500">Subscribers will appear here when people sign up.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No users yet</h3>
+          <p className="text-gray-500">Users will appear here when people sign up.</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User Details</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subscribed</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Joined</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Login</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {subscribers.map((subscriber) => (
-                <tr key={subscriber.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {subscriber.email}
+              {users.map((user) => (
+                <tr key={user.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">
+                        {user.full_name || 'No name provided'}
+                      </div>
+                      <div className="text-sm text-gray-500">{user.email}</div>
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      subscriber.is_active 
+                      user.role === 'admin' 
+                        ? 'bg-purple-100 text-purple-800'
+                        : user.role === 'editor'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {user.role.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      user.is_active 
                         ? 'bg-green-100 text-green-800'
                         : 'bg-red-100 text-red-800'
                     }`}>
-                      {subscriber.is_active ? 'Active' : 'Inactive'}
+                      {user.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(subscriber.subscribed_at).toLocaleDateString()}
+                    {new Date(user.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    {user.role !== 'admin' && (
+                      <button
+                        onClick={() => handleToggleUserStatus(user.id, user.is_active)}
+                        className={`px-3 py-1 rounded hover:opacity-80 transition-colors ${
+                          user.is_active
+                            ? 'bg-red-600 text-white'
+                            : 'bg-green-600 text-white'
+                        }`}
+                      >
+                        {user.is_active ? '🚫 Deactivate' : '✅ Activate'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1589,21 +2101,235 @@ function CategoryManagement() {
   );
 }
 
-// Analytics Component
+// Analytics Component with Real Data
 function Analytics() {
-  return (
-    <div className="space-y-6">
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, []);
+
+  const fetchAnalytics = async () => {
+    try {
+      const response = await fetch(
+        'https://ai-news-api.skaybotlabs.workers.dev/api/admin/analytics/overview',
+        {
+          headers: {
+            'Authorization': 'Bearer demo-admin-token'
+          }
+        }
+      );
+      
+      const data = await response.json();
+      if (data.success) {
+        setAnalyticsData(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <span className="ml-2">Loading analytics...</span>
+      </div>
+    );
+  }
+
+  if (!analyticsData) {
+    return (
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-2xl font-bold mb-6">Analytics Overview</h2>
         <div className="text-center py-12">
           <div className="text-gray-400 text-6xl mb-4">📈</div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Analytics Coming Soon</h3>
-          <p className="text-gray-500">Detailed analytics and insights will be available soon.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Analytics Data</h3>
+          <p className="text-gray-500">Unable to load analytics data.</p>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Quick Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium text-gray-600">Total Articles</h3>
+              <p className="text-3xl font-bold text-blue-600 mt-2">
+                {analyticsData.totals.articles.toLocaleString()}
+              </p>
+            </div>
+            <div className="text-4xl opacity-20">📰</div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium text-gray-600">Total Users</h3>
+              <p className="text-3xl font-bold text-green-600 mt-2">
+                {analyticsData.totals.users.toLocaleString()}
+              </p>
+            </div>
+            <div className="text-4xl opacity-20">👥</div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium text-gray-600">Total Views</h3>
+              <p className="text-3xl font-bold text-purple-600 mt-2">
+                {analyticsData.totals.views.toLocaleString()}
+              </p>
+            </div>
+            <div className="text-4xl opacity-20">👁️</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Top Articles This Week */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold mb-4">🏆 Top Articles This Week</h2>
+        {analyticsData.topArticles.length === 0 ? (
+          <p className="text-gray-500 py-4">No articles published this week.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Article</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Views</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Published</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {analyticsData.topArticles.map((article, index) => (
+                  <tr key={index} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-gray-900 max-w-xs truncate">
+                        {article.title}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {article.category}
+                    </td>
+                    <td className="px-6 py-4 text-sm font-semibold text-blue-600">
+                      {article.view_count.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {new Date(article.published_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Category Performance */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold mb-4">📊 Articles by Category</h2>
+        {analyticsData.categoryPerformance.length === 0 ? (
+          <p className="text-gray-500 py-4">No categorized articles found.</p>
+        ) : (
+          <div className="space-y-4">
+            {analyticsData.categoryPerformance
+              .sort((a, b) => b.views - a.views)
+              .map((category, index) => (
+                <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded">
+                  <div>
+                    <h3 className="font-medium text-gray-900">{category.category}</h3>
+                    <p className="text-sm text-gray-500">{category.articles} articles</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-blue-600">{category.views.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">total views</p>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
+
+      {/* Daily Views Trend */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold mb-4">📈 Daily Views (Last 30 Days)</h2>
+        {analyticsData.dailyViews.length === 0 ? (
+          <p className="text-gray-500 py-4">No view data available for the last 30 days.</p>
+        ) : (
+          <div className="h-64 flex items-end space-x-1">
+            {analyticsData.dailyViews.slice(-30).map((day, index) => {
+              const maxViews = Math.max(...analyticsData.dailyViews.map(d => d.views));
+              const height = maxViews > 0 ? (day.views / maxViews) * 100 : 0;
+              
+              return (
+                <div
+                  key={index}
+                  className="flex-1 bg-blue-500 hover:bg-blue-600 transition-colors min-h-[4px] relative group"
+                  style={{ height: `${Math.max(height, 2)}%` }}
+                  title={`${day.date}: ${day.views} views`}
+                >
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    {new Date(day.date).toLocaleDateString()}: {day.views} views
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* User Growth */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold mb-4">👥 User Growth (Last 30 Days)</h2>
+        {analyticsData.userGrowth.length === 0 ? (
+          <p className="text-gray-500 py-4">No new users in the last 30 days.</p>
+        ) : (
+          <div className="h-64 flex items-end space-x-1">
+            {analyticsData.userGrowth.slice(-30).map((day, index) => {
+              const maxUsers = Math.max(...analyticsData.userGrowth.map(d => d.users));
+              const height = maxUsers > 0 ? (day.users / maxUsers) * 100 : 0;
+              
+              return (
+                <div
+                  key={index}
+                  className="flex-1 bg-green-500 hover:bg-green-600 transition-colors min-h-[4px] relative group"
+                  style={{ height: `${Math.max(height, 2)}%` }}
+                  title={`${day.date}: ${day.users} new users`}
+                >
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    {new Date(day.date).toLocaleDateString()}: {day.users} new users
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Refresh Button */}
+      <div className="text-center">
+        <button
+          onClick={fetchAnalytics}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          🔄 Refresh Analytics
+        </button>
       </div>
     </div>
   );
 }
+
 function CreateArticleForm({ onSuccess }: { onSuccess: () => void }) {
   const [formData, setFormData] = useState({
     title: '',
@@ -1849,65 +2575,63 @@ export default function AdminDashboard() {
     return () => clearInterval(timeInterval);
   }, [user]);
 
-  // REPLACE your existing checkSession function with this improved version
-
-const checkSession = async () => {
-  console.log('🔍 Starting session check...');
-  
-  if (!supabase) {
-    console.log('❌ Supabase not available');
-    setLoading(false);
-    return;
-  }
-
-  try {
-    const { data: { session }, error } = await supabase.auth.getSession();
+  const checkSession = async () => {
+    console.log('🔍 Starting session check...');
     
-    console.log('Session check result:', { 
-      hasSession: !!session, 
-      hasUser: !!session?.user,
-      email: session?.user?.email,
-      error 
-    });
-    
-    if (error) {
-      console.error('❌ Session error:', error);
+    if (!supabase) {
+      console.log('❌ Supabase not available');
+      setLoading(false);
       return;
     }
-    
-    if (session?.user) {
-      console.log('👤 User found, checking admin role...');
+
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
       
-      // Verify admin role in user_profiles table
-      const { data: userData, error: userError } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('email', session.user.email)
-        .single();
+      console.log('Session check result:', { 
+        hasSession: !!session, 
+        hasUser: !!session?.user,
+        email: session?.user?.email,
+        error 
+      });
+      
+      if (error) {
+        console.error('❌ Session error:', error);
+        return;
+      }
+      
+      if (session?.user) {
+        console.log('👤 User found, checking admin role...');
+        
+        // Verify admin role in user_profiles table
+        const { data: userData, error: userError } = await supabase
+          .from('user_profiles')
+          .select('role')
+          .eq('email', session.user.email)
+          .single();
 
-      console.log('Role check result:', { userData, userError });
+        console.log('Role check result:', { userData, userError });
 
-      if (userData?.role === 'admin') {
-        console.log('✅ Admin role confirmed');
-        setUser(session.user);
+        if (userData?.role === 'admin') {
+          console.log('✅ Admin role confirmed');
+          setUser(session.user);
+        } else {
+          console.log('❌ Not admin or role check failed');
+          await supabase.auth.signOut();
+          setUser(null);
+        }
       } else {
-        console.log('❌ Not admin or role check failed');
-        await supabase.auth.signOut();
+        console.log('❌ No session found');
         setUser(null);
       }
-    } else {
-      console.log('❌ No session found');
+    } catch (error) {
+      console.error('❌ Session check error:', error);
       setUser(null);
+    } finally {
+      // CRITICAL: Always set loading to false
+      console.log('✅ Session check complete, setting loading to false');
+      setLoading(false);
     }
-  } catch (error) {
-    console.error('❌ Session check error:', error);
-    setUser(null);
-  } finally {
-    // CRITICAL: Always set loading to false
-    console.log('✅ Session check complete, setting loading to false');
-    setLoading(false);
-  }
-};
+  };
 
   const fetchStats = async () => {
     try {
@@ -1931,12 +2655,33 @@ const checkSession = async () => {
   };
 
   const handleLogout = async () => {
-    if (supabase) {
-      await supabase.auth.signOut();
+    console.log('🚪 Starting logout process...');
+    
+    try {
+      if (supabase) {
+        console.log('📤 Signing out from Supabase...');
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.error('❌ Logout error:', error);
+        } else {
+          console.log('✅ Successfully signed out from Supabase');
+        }
+      }
+      
+      // Clear local state regardless of Supabase response
+      console.log('🧹 Clearing local state...');
+      setUser(null);
+      setStats(null);
+      setActiveTab('dashboard');
+      
+      console.log('✅ Logout complete');
+    } catch (error) {
+      console.error('❌ Logout process error:', error);
+      // Still clear local state even if there's an error
+      setUser(null);
+      setStats(null);
+      setActiveTab('dashboard');
     }
-    setUser(null);
-    setStats(null);
-    setActiveTab('dashboard');
   };
 
   // Show login form if not authenticated
@@ -1973,7 +2718,7 @@ const checkSession = async () => {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">🤖 AI News Admin Portal</h1>
+              <h1 className="text-3xl font-bold text-gray-900">🤖 NineT Admin Portal</h1>
               <p className="text-gray-600 mt-1">Manage your AI news content and automation</p>
             </div>
             <div className="flex items-center space-x-4">
@@ -2001,9 +2746,10 @@ const checkSession = async () => {
               {[
                 { id: 'dashboard', name: 'Dashboard', icon: '📊' },
                 { id: 'approval', name: 'Pending Approval', icon: '✋', badge: stats?.pendingApproval },
+                { id: 'weekly', name: 'The Breakdown', icon: '📚' },
                 { id: 'articles', name: 'All Articles', icon: '📄' },
-                { id: 'subscribers', name: 'Subscribers', icon: '👥' },
-                { id: 'create', name: 'Create Article', icon: '✍️' },
+                { id: 'users', name: 'Users', icon: '👥' },
+                { id: 'create', name: 'Create Article', icon: '✏️' },
                 { id: 'categories', name: 'Categories', icon: '🏷️' },
                 { id: 'analytics', name: 'Analytics', icon: '📈' }
               ].map((tab) => (
@@ -2045,11 +2791,11 @@ const checkSession = async () => {
                   onClick: () => setActiveTab('articles')
                 },
                 { 
-                  title: 'Subscribers', 
-                  value: stats?.totalSubscribers || 0, 
+                  title: 'Users', 
+                  value: stats?.totalUsers || 0, 
                   icon: '👥', 
                   color: 'green',
-                  onClick: () => setActiveTab('subscribers')
+                  onClick: () => setActiveTab('users')
                 },
                 { 
                   title: 'Total Views', 
@@ -2106,7 +2852,7 @@ const checkSession = async () => {
                   onClick={() => setActiveTab('create')}
                   className="p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all text-center group"
                 >
-                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">✍️</div>
+                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">✏️</div>
                   <div className="text-lg font-semibold text-gray-900">Create Manual Article</div>
                   <div className="text-gray-600 mt-1">Add article manually and publish immediately</div>
                 </button>
@@ -2115,7 +2861,7 @@ const checkSession = async () => {
                   onClick={() => setActiveTab('articles')}
                   className="p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-all text-center group"
                 >
-                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">✏️</div>
+                  <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">📝</div>
                   <div className="text-lg font-semibold text-gray-900">Manage Articles</div>
                   <div className="text-gray-600 mt-1">Edit, delete, and organize existing articles</div>
                 </button>
@@ -2126,7 +2872,8 @@ const checkSession = async () => {
 
         {activeTab === 'approval' && <ApprovalDashboard />}
         {activeTab === 'articles' && <ArticlesList />}
-        {activeTab === 'subscribers' && <SubscribersList />}
+        {activeTab === 'weekly' && <WeeklyArticlesManager />}
+        {activeTab === 'users' && <UsersList />}
         {activeTab === 'create' && <CreateArticleForm onSuccess={() => { fetchStats(); setActiveTab('articles'); }} />}
         {activeTab === 'categories' && <CategoryManagement />}
         {activeTab === 'analytics' && <Analytics />}

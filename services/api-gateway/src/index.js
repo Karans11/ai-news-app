@@ -6,6 +6,39 @@ export default {
     // Initialize Supabase
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
     
+    // ✅ ADD THIS CODE BLOCK HERE ✅
+
+    // Simple rate limiting for login attempts
+    const loginAttempts = new Map();
+
+    const checkLoginRateLimit = (ip) => {
+      const now = Date.now();
+      const windowMs = 5 * 60 * 1000; // 5 minutes
+      const maxAttempts = 5;
+      
+      if (!loginAttempts.has(ip)) {
+        loginAttempts.set(ip, { count: 1, resetTime: now + windowMs });
+        return true;
+      }
+      
+      const attempts = loginAttempts.get(ip);
+      
+      // Reset if window expired
+      if (now > attempts.resetTime) {
+        loginAttempts.set(ip, { count: 1, resetTime: now + windowMs });
+        return true;
+      }
+      
+      // Check if exceeded limit
+      if (attempts.count >= maxAttempts) {
+        return false;
+      }
+      
+      attempts.count++;
+      return true;
+    };
+    // ✅ END OF CODE BLOCK ✅
+
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -22,11 +55,19 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // Helper function for JSON responses
+    // Helper function for JSON responses with security headers
     const jsonResponse = (data, status = 200) => {
       return new Response(JSON.stringify(data), {
         status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { 
+          ...corsHeaders, 
+          'Content-Type': 'application/json',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'X-XSS-Protection': '1; mode=block',
+          'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+          'Referrer-Policy': 'strict-origin-when-cross-origin'
+        }
       });
     };
 
@@ -34,6 +75,38 @@ export default {
     const errorResponse = (message, status = 500) => {
       console.error('API Error:', message);
       return jsonResponse({ success: false, error: message }, status);
+    };
+
+    // ✅ ADD THESE VALIDATION FUNCTIONS ✅
+    // Input validation helpers
+    const validateEmail = (email) => {
+      if (!email || typeof email !== 'string') return false;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(email) && email.length <= 254;
+    };
+
+    const sanitizeInput = (input) => {
+      if (typeof input !== 'string') return '';
+      return input.trim().substring(0, 1000); // Limit length and trim
+    };
+
+
+
+    const validateRequired = (value, fieldName) => {
+      if (!value || (typeof value === 'string' && value.trim() === '')) {
+        return `${fieldName} is required`;
+      }
+      return null;
+    };
+    // ✅ END OF VALIDATION FUNCTIONS ✅
+
+    // Security logging function
+    const logSecurityEvent = (event, details, request) => {
+      const timestamp = new Date().toISOString();
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const userAgent = request.headers.get('User-Agent') || 'unknown';
+      
+      console.log(`SECURITY: ${timestamp} - ${event} - IP: ${ip} - ${JSON.stringify(details)}`);
     };
 
     try {
@@ -96,6 +169,51 @@ export default {
         return jsonResponse({ success: true, data });
       }
 
+      // ==================== WEEKLY ARTICLES PUBLIC ENDPOINTS ====================
+      
+      // GET /api/weekly-articles - Get published weekly articles
+      if (path === '/api/weekly-articles' && method === 'GET') {
+        const { data, error } = await supabase
+          .from('weekly_articles')
+          .select('*')
+          .eq('is_published', true)
+          .order('publish_date', { ascending: false })
+          .limit(10);
+
+        if (error) throw error;
+        return jsonResponse({ success: true, data: data || [] });
+      }
+
+      // GET /api/weekly-articles/:id - Get specific weekly article
+      if (path.startsWith('/api/weekly-articles/') && method === 'GET' && !path.includes('/admin/')) {
+        const id = path.split('/')[3];
+        
+        const { data, error } = await supabase
+          .from('weekly_articles')
+          .select('*')
+          .eq('id', id)
+          .eq('is_published', true)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return errorResponse('Weekly article not found', 404);
+          }
+          throw error;
+        }
+
+        // Increment view count
+        await supabase
+          .from('weekly_articles')
+          .update({ view_count: data.view_count + 1 })
+          .eq('id', id);
+
+        return jsonResponse({ 
+          success: true, 
+          data: { ...data, view_count: data.view_count + 1 } 
+        });
+      }
+
       // POST /api/subscribe - Subscribe to newsletter
       if (path === '/api/subscribe' && method === 'POST') {
         const body = await request.json();
@@ -121,20 +239,58 @@ export default {
         return jsonResponse({ success: true, message: 'Subscribed successfully' });
       }
 
-      // POST /api/auth/login - Admin login
+      // POST /api/auth/login - Admin login with rate limiting and validation
       if (path === '/api/auth/login' && method === 'POST') {
-        const body = await request.json();
-        const { email, password } = body;
+        const clientIP = request.headers.get('CF-Connecting-IP') || 
+                        request.headers.get('X-Forwarded-For') || 
+                        'unknown';
         
-        // Check credentials
-        if (email === env.ADMIN_EMAIL && password === env.ADMIN_PASSWORD) {
-          return jsonResponse({ 
-            success: true, 
-            token: 'demo-admin-token',
-            user: { email, role: 'admin' }
-          });
-        } else {
-          return errorResponse('Invalid credentials', 401);
+        try {
+          // Check rate limit (keep your existing logic)
+          if (!checkLoginRateLimit(clientIP)) {
+            logSecurityEvent('RATE_LIMIT_EXCEEDED', { ip: clientIP }, request);
+            return errorResponse('Too many login attempts. Please try again in 5 minutes.', 429);
+          }
+          
+          const body = await request.json();
+          const { email, password } = body;
+          
+          // ✅ NEW: Input validation
+          if (!email || !password) {
+            logSecurityEvent('LOGIN_MISSING_FIELDS', { email: email || 'missing' }, request);
+            return errorResponse('Email and password are required', 400);
+          }
+          
+          if (!validateEmail(email)) {
+            logSecurityEvent('LOGIN_INVALID_EMAIL', { email }, request);
+            return errorResponse('Invalid email format', 400);
+          }
+          
+          // ✅ NEW: Sanitize inputs
+          const cleanEmail = sanitizeInput(email);
+          const cleanPassword = sanitizeInput(password);
+          
+          if (cleanPassword.length < 3) {
+            logSecurityEvent('LOGIN_WEAK_PASSWORD', { email: cleanEmail }, request);
+            return errorResponse('Invalid credentials', 401);
+          }
+          
+          // Check credentials (using cleaned inputs)
+          if (cleanEmail === env.ADMIN_EMAIL && cleanPassword === env.ADMIN_PASSWORD) {
+            logSecurityEvent('LOGIN_SUCCESS', { email: cleanEmail }, request);
+            return jsonResponse({ 
+              success: true, 
+              token: 'demo-admin-token',
+              user: { email: cleanEmail, role: 'admin' }
+            });
+          } else {
+            logSecurityEvent('LOGIN_FAILED', { email: cleanEmail }, request);
+            return errorResponse('Invalid credentials', 401);
+          }
+          
+        } catch (e) {
+          logSecurityEvent('LOGIN_ERROR', { error: e.message }, request);
+          return errorResponse('Invalid request format', 400);
         }
       }
 
@@ -154,9 +310,9 @@ export default {
         if (path === '/api/admin/stats' && method === 'GET') {
           console.log('Fetching admin stats...');
           
-          const [articlesResult, subscribersResult, viewsResult, pendingResult] = await Promise.all([
+          const [articlesResult, usersResult, viewsResult, pendingResult] = await Promise.all([
             supabase.from('articles').select('*', { count: 'exact', head: true }),
-            supabase.from('subscribers').select('*', { count: 'exact', head: true }).eq('is_active', true),
+            supabase.from('user_profiles').select('*', { count: 'exact', head: true }).eq('is_active', true),
             supabase.from('articles').select('view_count'),
             supabase.from('articles').select('*', { count: 'exact', head: true }).eq('approval_status', 'pending')
           ]);
@@ -167,7 +323,7 @@ export default {
             success: true,
             data: {
               totalArticles: articlesResult.count || 0,
-              totalSubscribers: subscribersResult.count || 0,
+              totalUsers: usersResult.count || 0,
               totalViews: viewSum,
               pendingApproval: pendingResult.count || 0,
               lastUpdated: new Date().toISOString()
@@ -178,15 +334,69 @@ export default {
           return jsonResponse(responseData);
         }
 
-        // GET /api/admin/articles - Get all articles for admin
+        // GET /api/admin/articles - Get all articles for admin with pagination and filters
         if (path === '/api/admin/articles' && method === 'GET') {
-          const { data, error } = await supabase
+          const urlParams = new URLSearchParams(url.search);
+          const page = parseInt(urlParams.get('page') || '1');
+          const limit = parseInt(urlParams.get('limit') || '50');
+          const search = urlParams.get('search') || '';
+          const status = urlParams.get('status') || '';
+          const category = urlParams.get('category') || '';
+          const dateFrom = urlParams.get('dateFrom') || '';
+          const dateTo = urlParams.get('dateTo') || '';
+          
+          const offset = (page - 1) * limit;
+          
+          // Build query
+          let query = supabase
             .from('articles')
-            .select('*')
-            .order('created_at', { ascending: false });
+            .select('*', { count: 'exact' });
+          
+          // Apply filters
+          if (search) {
+            query = query.or(`title.ilike.%${search}%,summary.ilike.%${search}%,source.ilike.%${search}%`);
+          }
+          
+          if (status) {
+            if (status === 'published') {
+              query = query.eq('is_published', true);
+            } else if (status === 'scheduled') {
+              query = query.eq('is_published', false).not('scheduled_publish_at', 'is', null);
+            } else if (status === 'pending') {
+              query = query.eq('approval_status', 'pending');
+            } else if (status === 'rejected') {
+              query = query.eq('approval_status', 'rejected');
+            } else if (status === 'draft') {
+              query = query.eq('is_published', false).is('scheduled_publish_at', null);
+            }
+          }
+          
+          if (category) {
+            query = query.eq('category', category);
+          }
+          
+          if (dateFrom) {
+            query = query.gte('created_at', dateFrom);
+          }
+          
+          if (dateTo) {
+            query = query.lte('created_at', dateTo + 'T23:59:59.999Z');
+          }
+          
+          const { data, error, count } = await query
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
 
           if (error) throw error;
-          return jsonResponse({ success: true, data: data || [] });
+          
+          return jsonResponse({ 
+            success: true, 
+            data: data || [], 
+            total: count || 0,
+            page,
+            limit,
+            totalPages: Math.ceil((count || 0) / limit)
+          });
         }
 
         // POST /api/admin/articles - Create new article
@@ -254,6 +464,37 @@ export default {
           return jsonResponse({ success: true, message: 'Article deleted successfully' });
         }
 
+        // GET /api/admin/users - Get all users
+        if (path === '/api/admin/users' && method === 'GET') {
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .select('id, email, full_name, role, is_active, created_at, last_login')
+            .order('created_at', { ascending: false });
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data: data || [] });
+        }
+
+        // PUT /api/admin/users/:id/toggle-status - Activate/deactivate users
+        if (path.match(/^\/api\/admin\/users\/[^\/]+\/toggle-status$/) && method === 'PUT') {
+          const userId = path.split('/')[4];
+          const body = await request.json();
+          const { is_active } = body;
+          
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .update({ 
+              is_active,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', userId)
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data });
+        }
+
         // GET /api/admin/subscribers - Get all subscribers
         if (path === '/api/admin/subscribers' && method === 'GET') {
           const { data, error } = await supabase
@@ -276,6 +517,188 @@ export default {
 
           if (error) throw error;
           return jsonResponse({ success: true, message: 'Subscriber deleted successfully' });
+        }
+
+        // GET /api/admin/categories - Get categories with article counts
+        if (path === '/api/admin/categories' && method === 'GET') {
+          const { data, error } = await supabase
+            .from('articles')
+            .select('category')
+            .not('category', 'is', null);
+
+          if (error) throw error;
+          
+          // Count articles by category
+          const categoryCounts = {};
+          data.forEach(article => {
+            const cat = article.category;
+            categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+          });
+          
+          const categories = Object.entries(categoryCounts).map(([name, count]) => ({
+            name,
+            count
+          }));
+          
+          return jsonResponse({ success: true, data: categories });
+        }
+
+        // POST /api/admin/categories - Create new category
+        if (path === '/api/admin/categories' && method === 'POST') {
+          const body = await request.json();
+          const { name } = body;
+          
+          return jsonResponse({ 
+            success: true, 
+            message: 'Category will be created when first article uses it',
+            category: name 
+          });
+        }
+
+        // PUT /api/admin/categories/:name - Rename category
+        if (path.match(/^\/api\/admin\/categories\/[^\/]+$/) && method === 'PUT') {
+          const oldName = decodeURIComponent(path.split('/')[4]);
+          const body = await request.json();
+          const { new_name } = body;
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .update({ category: new_name })
+            .eq('category', oldName)
+            .select();
+
+          if (error) throw error;
+          
+          return jsonResponse({ 
+            success: true, 
+            message: `Updated ${data.length} articles from "${oldName}" to "${new_name}"` 
+          });
+        }
+
+        // DELETE /api/admin/categories/:name - Delete category
+        if (path.match(/^\/api\/admin\/categories\/[^\/]+$/) && method === 'DELETE') {
+          const categoryName = decodeURIComponent(path.split('/')[4]);
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .update({ category: 'Uncategorized' })
+            .eq('category', categoryName)
+            .select();
+
+          if (error) throw error;
+          
+          return jsonResponse({ 
+            success: true, 
+            message: `Moved ${data.length} articles to "Uncategorized"` 
+          });
+        }
+
+        // ==================== WEEKLY ARTICLES ADMIN ENDPOINTS ====================
+
+        // GET /api/admin/weekly-articles - Get all weekly articles (published and drafts)
+        if (path === '/api/admin/weekly-articles' && method === 'GET') {
+          const { data, error } = await supabase
+            .from('weekly_articles')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data: data || [] });
+        }
+
+        // POST /api/admin/weekly-articles - Create new weekly article
+        if (path === '/api/admin/weekly-articles' && method === 'POST') {
+          const body = await request.json();
+          const {
+            title,
+            content,
+            summary,
+            topic_category,
+            featured_image_url,
+            reading_time_minutes,
+            publish_date,
+            week_number,
+            year,
+            tags,
+            meta_description,
+            author_name
+          } = body;
+
+          const { data, error } = await supabase
+            .from('weekly_articles')
+            .insert({
+              title,
+              content,
+              summary,
+              topic_category,
+              featured_image_url,
+              reading_time_minutes: reading_time_minutes || 10,
+              publish_date,
+              week_number,
+              year: year || new Date().getFullYear(),
+              tags: tags || [],
+              meta_description,
+              author_name: author_name || 'NineT Editorial Team',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data }, 201);
+        }
+
+        // PUT /api/admin/weekly-articles/:id - Update weekly article
+        if (path.startsWith('/api/admin/weekly-articles/') && method === 'PUT') {
+          const id = path.split('/')[4];
+          const body = await request.json();
+          
+          const { data, error } = await supabase
+            .from('weekly_articles')
+            .update({
+              ...body,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data });
+        }
+
+        // DELETE /api/admin/weekly-articles/:id - Delete weekly article
+        if (path.startsWith('/api/admin/weekly-articles/') && method === 'DELETE') {
+          const id = path.split('/')[4];
+          
+          const { error } = await supabase
+            .from('weekly_articles')
+            .delete()
+            .eq('id', id);
+
+          if (error) throw error;
+          return jsonResponse({ success: true, message: 'Weekly article deleted successfully' });
+        }
+
+        // POST /api/admin/articles/:id/publish - Manual publish override
+        if (path.match(/^\/api\/admin\/articles\/[^\/]+\/publish$/) && method === 'POST') {
+          const articleId = path.split('/')[4];
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .update({
+              is_published: true,
+              status: 'published',
+              published_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', articleId)
+            .select()
+            .single();
+
+          if (error) throw error;
+          return jsonResponse({ success: true, data });
         }
 
         // ==================== ENHANCED APPROVE/REJECT ENDPOINTS WITH DEBUG LOGGING ====================
@@ -487,6 +910,222 @@ export default {
             supabase_connected: !!supabase
           });
         }
+
+        // ==================== ANALYTICS ENDPOINTS ====================
+        
+        // GET /api/admin/analytics/overview - Dashboard overview
+        if (path === '/api/admin/analytics/overview' && method === 'GET') {
+          try {
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            
+            const [
+              categoryStats,
+              topArticles,
+              dailyViews,
+              userGrowth,
+              totalStats
+            ] = await Promise.all([
+              // Category performance
+              supabase
+                .from('articles')
+                .select('category, view_count')
+                .eq('is_published', true)
+                .not('category', 'is', null),
+              
+              // Top articles this week
+              supabase
+                .from('articles')
+                .select('title, view_count, published_at, category')
+                .eq('is_published', true)
+                .gte('published_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+                .order('view_count', { ascending: false })
+                .limit(5),
+              
+              // Daily views for chart (last 30 days)
+              supabase
+                .from('articles')
+                .select('published_at, view_count')
+                .eq('is_published', true)
+                .gte('published_at', thirtyDaysAgo.toISOString()),
+              
+              // User growth (last 30 days)
+              supabase
+                .from('user_profiles')
+                .select('created_at')
+                .gte('created_at', thirtyDaysAgo.toISOString()),
+              
+              // Total stats
+              Promise.all([
+                supabase.from('articles').select('*', { count: 'exact', head: true }),
+                supabase.from('user_profiles').select('*', { count: 'exact', head: true }),
+                supabase.from('articles').select('view_count').eq('is_published', true)
+              ])
+            ]);
+
+            // Process category stats
+            const categoryData = {};
+            categoryStats.data?.forEach(article => {
+              const cat = article.category;
+              if (!categoryData[cat]) {
+                categoryData[cat] = { count: 0, views: 0 };
+              }
+              categoryData[cat].count += 1;
+              categoryData[cat].views += article.view_count || 0;
+            });
+
+            const categoryChart = Object.entries(categoryData).map(([name, data]) => ({
+              category: name,
+              articles: data.count,
+              views: data.views
+            }));
+
+            // Process daily views
+            const dailyData = {};
+            dailyViews.data?.forEach(article => {
+              const date = article.published_at.split('T')[0];
+              dailyData[date] = (dailyData[date] || 0) + (article.view_count || 0);
+            });
+
+            const viewsChart = Object.entries(dailyData)
+              .map(([date, views]) => ({ date, views }))
+              .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // Process user growth
+            const userGrowthData = {};
+            userGrowth.data?.forEach(user => {
+              const date = user.created_at.split('T')[0];
+              userGrowthData[date] = (userGrowthData[date] || 0) + 1;
+            });
+
+            const growthChart = Object.entries(userGrowthData)
+              .map(([date, users]) => ({ date, users }))
+              .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // Calculate total views
+            const totalViews = totalStats[2].data?.reduce((sum, article) => sum + (article.view_count || 0), 0) || 0;
+
+            return jsonResponse({
+              success: true,
+              data: {
+                categoryPerformance: categoryChart,
+                topArticles: topArticles.data || [],
+                dailyViews: viewsChart,
+                userGrowth: growthChart,
+                totals: {
+                  articles: totalStats[0].count || 0,
+                  users: totalStats[1].count || 0,
+                  views: totalViews
+                }
+              }
+            });
+
+          } catch (error) {
+            console.error('Analytics error:', error);
+            return errorResponse(`Analytics failed: ${error.message}`, 500);
+          }
+        }
+
+        // ✅ NEW: POST /api/admin/publish-scheduled - Automatically publish scheduled articles
+        if (path === '/api/admin/publish-scheduled' && method === 'POST') {
+          console.log('=== AUTO-PUBLISH SCHEDULED ARTICLES START ===');
+          
+          const currentUTC = new Date().toISOString();
+          console.log('Current UTC time:', currentUTC);
+          
+          try {
+            // Find articles that should be published now
+            const { data: scheduledArticles, error: fetchError } = await supabase
+              .from('articles')
+              .select('*')
+              .eq('status', 'scheduled')
+              .eq('is_published', false)
+              .lte('scheduled_publish_at', currentUTC);
+
+            if (fetchError) {
+              console.error('Error fetching scheduled articles:', fetchError);
+              return errorResponse('Database error while fetching scheduled articles', 500);
+            }
+
+            console.log(`Found ${scheduledArticles?.length || 0} articles ready to publish`);
+
+            if (scheduledArticles && scheduledArticles.length > 0) {
+              const publishResults = [];
+              
+              for (const article of scheduledArticles) {
+                try {
+                  console.log(`Publishing article: ${article.title} (ID: ${article.id})`);
+                  console.log(`Scheduled for: ${article.scheduled_publish_at}, Current: ${currentUTC}`);
+                  
+                  const { data, error } = await supabase
+                    .from('articles')
+                    .update({
+                      is_published: true,
+                      status: 'published',
+                      published_at: currentUTC,
+                      updated_at: currentUTC
+                    })
+                    .eq('id', article.id)
+                    .select()
+                    .single();
+
+                  if (error) {
+                    console.error(`Error publishing article ${article.id}:`, error);
+                    publishResults.push({ 
+                      id: article.id, 
+                      title: article.title,
+                      success: false, 
+                      error: error.message 
+                    });
+                  } else {
+                    console.log(`✅ Successfully published: ${article.title}`);
+                    publishResults.push({ 
+                      id: article.id, 
+                      title: article.title,
+                      success: true 
+                    });
+                  }
+                } catch (err) {
+                  console.error(`Exception publishing article ${article.id}:`, err);
+                  publishResults.push({ 
+                    id: article.id, 
+                    title: article.title,
+                    success: false, 
+                    error: err.message 
+                  });
+                }
+              }
+
+              const successCount = publishResults.filter(r => r.success).length;
+              const failureCount = publishResults.filter(r => !r.success).length;
+              
+              console.log(`✅ Published ${successCount} articles, ${failureCount} failed`);
+              console.log('=== AUTO-PUBLISH SCHEDULED ARTICLES END ===');
+
+              return jsonResponse({ 
+                success: true, 
+                message: `Published ${successCount} articles${failureCount > 0 ? `, ${failureCount} failed` : ''}`,
+                published_count: successCount,
+                failed_count: failureCount,
+                results: publishResults
+              });
+            }
+
+            console.log('No articles ready for publishing');
+            console.log('=== AUTO-PUBLISH SCHEDULED ARTICLES END ===');
+            return jsonResponse({ 
+              success: true, 
+              message: 'No articles ready for publishing',
+              published_count: 0,
+              failed_count: 0
+            });
+
+          } catch (error) {
+            console.error('Unhandled error in auto-publish:', error);
+            console.log('=== AUTO-PUBLISH SCHEDULED ARTICLES END (ERROR) ===');
+            return errorResponse(`Auto-publish failed: ${error.message}`, 500);
+          }
+        }
       }
 
       // ==================== N8N WEBHOOK ENDPOINTS ====================
@@ -494,7 +1133,7 @@ export default {
       // POST /api/n8n/webhook/article - Receive articles from n8n
       if (path === '/api/n8n/webhook/article' && method === 'POST') {
         console.log('N8N webhook received');
-        
+      
         // Verify webhook secret
         const webhookSecret = request.headers.get('x-n8n-webhook-secret');
         if (webhookSecret !== env.N8N_WEBHOOK_SECRET) {
@@ -598,6 +1237,147 @@ export default {
           message: 'Workflow status tracked',
           run_id: data.id 
         });
+      }
+      
+      // SIMPLE TEST - Add this line
+      if (path === '/api/simple-test') {
+        return jsonResponse({ success: true, message: 'Simple test endpoint works' });
+      }
+
+      // GET version for testing Telegram endpoint
+      if (path === '/api/telegram/callback' && method === 'GET') {
+        return jsonResponse({ success: true, message: 'Telegram endpoint exists - GET test' });
+      }
+
+      // DEBUG: Simple webhook test
+      if (path === '/api/telegram/debug' && method === 'POST') {
+        console.log('DEBUG: Any POST request received');
+        const body = await request.json();
+        console.log('DEBUG: Request body:', body);
+        return jsonResponse({ success: true, message: 'Webhook received', body: body });
+      }
+
+      // ==================== TELEGRAM WEBHOOK ENDPOINTS ====================
+      
+      // POST /api/telegram/callback - Handle Telegram button clicks
+      if (path === '/api/telegram/callback' && method === 'POST') {
+        console.log('Telegram callback received');
+        
+        const body = await request.json();
+        console.log('Telegram callback payload:', body);
+        
+        const callbackQuery = body.callback_query;
+        if (!callbackQuery) {
+          console.error('No callback query found');
+          return errorResponse('No callback query found', 400);
+        }
+
+        const callbackData = callbackQuery.data; // e.g., "action:reject:123"
+        console.log('Callback data:', callbackData);
+        
+        const [action, operation, articleId] = callbackData.split(':');
+        console.log('Parsed data - operation:', operation, 'articleId:', articleId);
+
+        try {
+          // Handle the button click based on operation
+          if (operation === 'reject') {
+            console.log('Processing reject for article:', articleId);
+            
+            const { data, error } = await supabase
+              .from('articles')
+              .update({ 
+                approval_status: 'rejected',
+                status: 'rejected',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', articleId)
+              .select()
+              .single();
+              
+            if (error) {
+              console.error('Error rejecting article:', error);
+              return errorResponse('Failed to reject article', 500);
+            }
+            
+            console.log('Article rejected successfully:', articleId);
+            return jsonResponse({ success: true, message: 'Article rejected', data });
+          }
+
+          if (operation === 'schedule') {
+          console.log('Processing schedule for article:', articleId);
+          
+          // Calculate 1 hour from current IST time
+          const nowUTC = new Date();
+          const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+          const nowIST = new Date(nowUTC.getTime() + istOffset);
+          const oneHourLaterIST = new Date(nowIST.getTime() + 60 * 60 * 1000);
+          const scheduledTimeUTC = new Date(oneHourLaterIST.getTime() - istOffset);
+          
+          console.log('Current UTC time:', nowUTC.toISOString());
+          console.log('Current IST time:', nowIST.toISOString());
+          console.log('Scheduled IST time:', oneHourLaterIST.toISOString());
+          console.log('Scheduled UTC time (for DB):', scheduledTimeUTC.toISOString());
+          
+          const { data, error } = await supabase
+            .from('articles')
+            .update({ 
+              approval_status: 'approved',
+              status: 'scheduled',
+              scheduled_publish_at: scheduledTimeUTC.toISOString(),
+              approved_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', articleId)
+            .select()
+            .single();
+            
+          if (error) {
+            console.error('Error scheduling article:', error);
+            return errorResponse('Failed to schedule article', 500);
+          }
+          
+          console.log('Article scheduled successfully:', articleId);
+          const istDisplay = oneHourLaterIST.toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'});
+          return jsonResponse({ success: true, message: `Article scheduled for ${istDisplay} IST`, data });
+        }
+          
+          if (operation === 'publish') {
+            console.log('Processing publish for article:', articleId);
+            
+            const { data, error } = await supabase
+              .from('articles')
+              .update({ 
+                approval_status: 'approved',
+                status: 'published',
+                is_published: true,
+                published_at: new Date().toISOString(),
+                approved_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', articleId)
+              .select()
+              .single();
+              
+            if (error) {
+              console.error('Error publishing article:', error);
+              return errorResponse('Failed to publish article', 500);
+            }
+            
+            console.log('Article published successfully:', articleId);
+            return jsonResponse({ success: true, message: 'Article published', data });
+          }
+
+          return errorResponse('Unknown operation: ' + operation, 400);
+          
+        } catch (error) {
+          console.error('Error processing Telegram callback:', error);
+          return errorResponse('Internal error processing callback', 500);
+        }
+      }
+
+      // TEST ENDPOINT - Remove after testing
+      if (path === '/api/test-telegram' && method === 'GET') {
+        return jsonResponse({ success: true, message: 'Telegram endpoint area is working' });
       }
 
       // If no route matches, return 404
